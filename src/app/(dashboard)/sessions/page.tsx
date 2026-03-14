@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { Music2, PlusCircle } from 'lucide-react'
 import Link from 'next/link'
+import type { SessionRow } from '@/types/database'
 
 export default async function SessionsPage() {
   const supabase = await createClient()
@@ -16,7 +17,11 @@ export default async function SessionsPage() {
         title
       )
     `)
-    .order('created_at', { ascending: false })
+    .order('created_at', { ascending: false }) as {
+      data: (SessionRow & {
+        question_sets: { title: string } | null
+      })[] | null
+    }
 
   return (
     <div className="p-4 md:p-8">

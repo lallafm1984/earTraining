@@ -3,6 +3,7 @@
 // Client Component로 분리 → ssr: false 사용 가능
 import dynamic from 'next/dynamic'
 import type { QuestionType } from '@/types/database'
+import type { NoteEvent } from '@/components/sound/useSoundPlayer'
 
 const SoundPanel = dynamic(() => import('@/components/sound/SoundPanel'), {
   ssr: false,
@@ -18,8 +19,7 @@ interface Props {
   bpm: number
   keySignature: string
   timeSignature: string
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  initialNotes: any[]
+  initialNotes: NoteEvent[]
 }
 
 export default function SoundPanelClient(props: Props) {
@@ -29,7 +29,6 @@ export default function SoundPanelClient(props: Props) {
       bpm={props.bpm}
       keySignature={props.keySignature}
       timeSignature={props.timeSignature}
-      // @ts-expect-error: initialNotes prop은 SoundPanel 내부에서 처리됨
       initialNotes={props.initialNotes}
     />
   )
