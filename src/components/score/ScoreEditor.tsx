@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useId } from 'react';
-import { ScoreState, ScoreNote, NoteDuration, Accidental, PitchName, TupletType, generateAbc } from '@/lib/scoreUtils';
+import { ScoreState, ScoreNote, NoteDuration, Accidental, PitchName, TupletType, generateAbc, getTupletNoteDuration } from '@/lib/scoreUtils';
 import AbcjsRenderer from './AbcjsRenderer';
 import html2canvas from 'html2canvas';
 import { Download, Trash2, Undo, FileAudio } from 'lucide-react';
@@ -40,6 +40,7 @@ export default function ScoreEditor() {
   const [octave, setOctave] = useState<number>(4);
   const [tie, setTie] = useState<boolean>(false);
   const [tuplet, setTuplet] = useState<TupletType>('');
+  const [tupletCounter, setTupletCounter] = useState(0); // current note index in tuplet group
 
   // New audio options
   const [prependBasePitch, setPrependBasePitch] = useState<boolean>(false);
@@ -48,16 +49,33 @@ export default function ScoreEditor() {
   const scoreRef = useRef<HTMLDivElement>(null);
 
   const handleAddNote = (pitch: PitchName) => {
+    const isRest = pitch === 'rest';
+    const tupletCount = tuplet ? parseInt(tuplet, 10) : 0;
+    const isFirstInTuplet = tuplet && !isRest && tupletCounter === 0;
+
     const newNote: ScoreNote = {
       id: Math.random().toString(36).substr(2, 9),
       pitch,
-      octave: pitch === 'rest' ? 4 : octave,
-      accidental: pitch === 'rest' ? '' : accidental,
+      octave: isRest ? 4 : octave,
+      accidental: isRest ? '' : accidental,
       duration,
-      tie: pitch === 'rest' ? false : tie,
-      tuplet: pitch === 'rest' ? '' : tuplet,
+      tie: isRest ? false : tie,
+      // Only the FIRST note in a tuplet group gets the tuplet marker
+      tuplet: isFirstInTuplet ? tuplet : undefined,
+      tupletSpan: isFirstInTuplet ? duration : undefined,
+      tupletNoteDur: isFirstInTuplet ? getTupletNoteDuration(tuplet, duration) : undefined,
     };
     setState((prev) => ({ ...prev, notes: [...prev.notes, newNote] }));
+
+    // Track tuplet group progress
+    if (tuplet && !isRest) {
+      const next = tupletCounter + 1;
+      if (next >= tupletCount) {
+        setTupletCounter(0); // group complete, reset for next group
+      } else {
+        setTupletCounter(next);
+      }
+    }
   };
 
   const handleUndo = () => {
@@ -196,7 +214,7 @@ export default function ScoreEditor() {
               {([['', '없음'], ['3', '3연음'], ['5', '5연음'], ['6', '6연음'], ['7', '7연음']] as [TupletType, string][]).map(([val, label]) => (
                 <button
                   key={val}
-                  onClick={() => setTuplet(val)}
+                  onClick={() => { setTuplet(val); setTupletCounter(0); }}
                   className={`px-2 py-1 text-xs rounded transition-colors ${
                     tuplet === val
                       ? 'bg-amber-500 text-white font-medium'
@@ -206,6 +224,11 @@ export default function ScoreEditor() {
                   {label}
                 </button>
               ))}
+              {tuplet && (
+                <span className="text-xs text-amber-600 font-medium ml-1">
+                  ({tupletCounter}/{tuplet})
+                </span>
+              )}
             </div>
             
             <div className="ml-auto flex gap-4">

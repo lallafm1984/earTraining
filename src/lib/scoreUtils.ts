@@ -6,11 +6,19 @@ export type TupletType = '' | '3' | '5' | '6' | '7';
 
 export interface ScoreNote {
   pitch: PitchName;
-  octave: number; // e.g. 4 for Middle C
+  octave: number;
   accidental: Accidental;
   duration: NoteDuration;
   tie?: boolean;
-  tuplet?: TupletType; // '3' = triplet, '5' = quintuplet, etc.
+  /**
+   * Tuplet information — only set on the FIRST note of a tuplet group.
+   * 'tuplet' = the tuplet count (3, 5, 6, 7)
+   * 'tupletSpan' = the total duration the group occupies (e.g. '4' = quarter note)
+   * 'tupletNoteDur' = the calculated visual duration for each note in the group (in 16ths)
+   */
+  tuplet?: TupletType;
+  tupletSpan?: NoteDuration;
+  tupletNoteDur?: number;
   id: string;
 }
 
@@ -24,7 +32,6 @@ export interface ScoreState {
 
 /**
  * Parses duration to the number of 16th notes.
- * Used for bar calculation.
  */
 export function durationToSixteenths(dur: NoteDuration): number {
   switch (dur) {
@@ -42,7 +49,6 @@ export function durationToSixteenths(dur: NoteDuration): number {
 
 /**
  * Returns the maximum 16th notes per bar based on time signature.
- * e.g., '4/4' = 16. '3/4' = 12. '6/8' = 12.
  */
 export function getSixteenthsPerBar(timeSignature: string): number {
   const [topStr, bottomStr] = timeSignature.split('/');
@@ -50,6 +56,45 @@ export function getSixteenthsPerBar(timeSignature: string): number {
   const bottom = parseInt(bottomStr, 10);
   if (!top || !bottom) return 16;
   return top * (16 / bottom);
+}
+
+/**
+ * 잇단음표 법칙에 따라 개별 음표의 시각적 길이(16분음표 단위)를 계산합니다.
+ * 
+ * 규칙:
+ * - 3연음(Triplet): spanDur안에 3개 음표 → 각 음표 = span / 2 (한 단계 짧은 음표)
+ *   예) 4분음표 span → 각 음표가 8분음표(2)로 표시
+ * - 5연음(Quintuplet): spanDur안에 5개 음표 → 각 음표 = span / 4
+ *   예) 4분음표 span → 각 음표가 16분음표(1)로 표시
+ * - 6연음(Sextuplet): spanDur안에 6개 음표 → 각 음표 = span / 4 (관습적 표기)
+ * - 7연음(Septuplet): spanDur안에 7개 음표 → 각 음표 = span / 4
+ */
+export function getTupletNoteDuration(tupletType: TupletType, spanDuration: NoteDuration): number {
+  const spanSixteenths = durationToSixteenths(spanDuration);
+  
+  switch (tupletType) {
+    case '3':
+      // 3연음: 각 음표 = span / 2 (3개가 2개 자리에 들어감)
+      return Math.max(1, Math.floor(spanSixteenths / 2));
+    case '5':
+      // 5연음: 각 음표 = span / 4 (5개가 4개 자리에 들어감)
+      return Math.max(1, Math.floor(spanSixteenths / 4));
+    case '6':
+      // 6연음: 각 음표 = span / 4 (관습적으로 16분음표 표기)
+      return Math.max(1, Math.floor(spanSixteenths / 4));
+    case '7':
+      // 7연음: 각 음표 = span / 4
+      return Math.max(1, Math.floor(spanSixteenths / 4));
+    default:
+      return spanSixteenths;
+  }
+}
+
+/**
+ * 잇단음표의 실제 차지하는 시간(16분음표 기준)을 계산합니다.
+ */
+export function getTupletActualSixteenths(tupletType: TupletType, spanDuration: NoteDuration): number {
+  return durationToSixteenths(spanDuration);
 }
 
 /**
@@ -73,16 +118,21 @@ export function generateAbc(state: ScoreState): string {
   const sixteenthsPerBar = getSixteenthsPerBar(state.timeSignature);
   let currentBarSixteenths = 0;
   let abcNotes = '';
-  let tupletRemaining = 0; // how many notes remain in current tuplet group
+  let tupletRemaining = 0;
+  let currentTupletNoteDur = 0;
+  let currentTupletSpanSixteenths = 0;
+  let tupletBarAdvanced = false;
 
   state.notes.forEach((note, index) => {
     // Handle tuplet start marker
     if (note.tuplet && tupletRemaining === 0) {
-      const p = parseInt(note.tuplet, 10); // number of notes in group
-      // Common tuplet ratios: (3 = 3 in the time of 2, (5 = 5:4, (6 = 6:4, (7 = 7:4
-      const q = note.tuplet === '3' ? 2 : note.tuplet === '5' ? 4 : note.tuplet === '6' ? 4 : 4;
+      const p = parseInt(note.tuplet, 10);
+      const q = note.tuplet === '3' ? 2 : 4; // 3:2 or p:4
       abcNotes += `(${p}:${q}:${p}`;
       tupletRemaining = p;
+      currentTupletNoteDur = note.tupletNoteDur || getTupletNoteDuration(note.tuplet, note.tupletSpan || note.duration);
+      currentTupletSpanSixteenths = getTupletActualSixteenths(note.tuplet, note.tupletSpan || note.duration);
+      tupletBarAdvanced = false;
     }
 
     let abcPitch = '';
@@ -110,20 +160,37 @@ export function generateAbc(state: ScoreState): string {
       abcPitch = 'z'; // Rest
     }
 
-    // 3. Duration relative to L:1/16
-    const dur16ths = durationToSixteenths(note.duration);
+    // 3. Duration: use tuplet note duration if in a tuplet group, otherwise normal
+    let dur16ths: number;
+    if (tupletRemaining > 0) {
+      dur16ths = currentTupletNoteDur;
+    } else {
+      dur16ths = durationToSixteenths(note.duration);
+    }
     const durStr = dur16ths === 1 ? '' : dur16ths.toString();
     
     abcNotes += abcPitch + durStr;
     if (note.tie) {
       abcNotes += '-';
     }
-    abcNotes += ' ';
+    // 잇단음표 그룹 내에서는 공백 없이 붙여야 beam(꼬리 연결)이 됨
+    if (tupletRemaining > 1) {
+      // 그룹 내부 — 공백 없이 (beam 연결)
+    } else {
+      abcNotes += ' ';
+    }
 
-    if (tupletRemaining > 0) tupletRemaining--;
+    // 4. Track tuplet and bar positions
+    if (tupletRemaining > 0) {
+      tupletRemaining--;
+      // Only advance bar counter once when the entire tuplet group is done
+      if (tupletRemaining === 0) {
+        currentBarSixteenths += currentTupletSpanSixteenths;
+      }
+    } else {
+      currentBarSixteenths += dur16ths;
+    }
 
-    // 4. Bar lines
-    currentBarSixteenths += dur16ths;
     if (currentBarSixteenths >= sixteenthsPerBar) {
       abcNotes += '| ';
       currentBarSixteenths = 0;
