@@ -8,6 +8,7 @@ import {
   BookOpen,
   PlusCircle,
   Music2,
+  FileMusic,
   LogOut,
   GraduationCap,
 } from 'lucide-react'
@@ -32,6 +33,11 @@ const navItems = [
     href: '/sessions',
     label: '수업 세션',
     icon: Music2,
+  },
+  {
+    href: '/score-creator',
+    label: '악보 제작',
+    icon: FileMusic,
   },
 ]
 

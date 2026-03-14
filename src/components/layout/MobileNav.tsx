@@ -2,13 +2,14 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { LayoutDashboard, BookOpen, PlusCircle, Music2 } from 'lucide-react'
+import { LayoutDashboard, BookOpen, PlusCircle, Music2, FileMusic } from 'lucide-react'
 
 const navItems = [
   { href: '/dashboard',      label: '대시보드', icon: LayoutDashboard },
   { href: '/questions',      label: '문제 은행', icon: BookOpen },
   { href: '/questions/new',  label: '출제',      icon: PlusCircle },
   { href: '/sessions',       label: '세션',      icon: Music2 },
+  { href: '/score-creator',  label: '악보제작',  icon: FileMusic },
 ]
 
 export default function MobileNav() {
