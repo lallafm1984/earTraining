@@ -98,6 +98,21 @@ export function getTupletActualSixteenths(tupletType: TupletType, spanDuration: 
 }
 
 /**
+ * 박자표에 따른 beam(꼬리 묶음) 그룹 크기를 16분음표 단위로 반환.
+ * 6/8, 9/8, 12/8 등 복합 박자는 점4분(3×8분) 단위로,
+ * 단순 박자는 한 박 단위로 묶는다.
+ */
+export function getBeamGroupSixteenths(timeSignature: string): number {
+  const [topStr, bottomStr] = timeSignature.split('/');
+  const top = parseInt(topStr, 10);
+  const bottom = parseInt(bottomStr, 10);
+  if (bottom === 8 && top % 3 === 0 && top >= 6) {
+    return 6;
+  }
+  return 16 / bottom;
+}
+
+/**
  * ABC format uses specific ASCII characters to represent notes.
  * L:1/16 is used as the base length.
  */
@@ -116,12 +131,12 @@ export function generateAbc(state: ScoreState): string {
   }
 
   const sixteenthsPerBar = getSixteenthsPerBar(state.timeSignature);
+  const beamGroupSize = getBeamGroupSixteenths(state.timeSignature);
   let currentBarSixteenths = 0;
   let abcNotes = '';
   let tupletRemaining = 0;
   let currentTupletNoteDur = 0;
   let currentTupletSpanSixteenths = 0;
-  let tupletBarAdvanced = false;
 
   state.notes.forEach((note, index) => {
     // Handle tuplet start marker
@@ -132,7 +147,6 @@ export function generateAbc(state: ScoreState): string {
       tupletRemaining = p;
       currentTupletNoteDur = note.tupletNoteDur || getTupletNoteDuration(note.tuplet, note.tupletSpan || note.duration);
       currentTupletSpanSixteenths = getTupletActualSixteenths(note.tuplet, note.tupletSpan || note.duration);
-      tupletBarAdvanced = false;
     }
 
     let abcPitch = '';
@@ -160,7 +174,7 @@ export function generateAbc(state: ScoreState): string {
       abcPitch = 'z'; // Rest
     }
 
-    // 3. Duration: use tuplet note duration if in a tuplet group, otherwise normal
+    // 3. Duration
     let dur16ths: number;
     if (tupletRemaining > 0) {
       dur16ths = currentTupletNoteDur;
@@ -173,22 +187,26 @@ export function generateAbc(state: ScoreState): string {
     if (note.tie) {
       abcNotes += '-';
     }
-    // 잇단음표 그룹 내에서는 공백 없이 붙여야 beam(꼬리 연결)이 됨
-    if (tupletRemaining > 1) {
-      // 그룹 내부 — 공백 없이 (beam 연결)
-    } else {
-      abcNotes += ' ';
-    }
 
-    // 4. Track tuplet and bar positions
+    // 4. Track positions and apply beaming rules
     if (tupletRemaining > 0) {
       tupletRemaining--;
-      // Only advance bar counter once when the entire tuplet group is done
       if (tupletRemaining === 0) {
         currentBarSixteenths += currentTupletSpanSixteenths;
       }
+      if (tupletRemaining > 0) {
+        // Still inside tuplet group — no space (beam connected)
+      } else {
+        abcNotes += ' ';
+      }
     } else {
       currentBarSixteenths += dur16ths;
+      const isBeamable = dur16ths <= 3; // 8th, dotted 8th, 16th
+      const isAtBeatBoundary = currentBarSixteenths % beamGroupSize === 0;
+
+      if (!isBeamable || isAtBeatBoundary || currentBarSixteenths >= sixteenthsPerBar) {
+        abcNotes += ' ';
+      }
     }
 
     if (currentBarSixteenths >= sixteenthsPerBar) {

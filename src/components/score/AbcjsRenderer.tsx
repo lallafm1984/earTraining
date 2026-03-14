@@ -12,7 +12,25 @@ interface AbcjsRendererProps {
   timeSignature?: string;
   tempo?: number;
   scaleTempo?: number;
+  keySignature?: string;
 }
+
+const SCALE_NOTES: Record<string, string[]> = {
+  'C':   ['C','D','E','F','G','A','B','c'],
+  'G':   ['G','A','B','c','d','e','f','g'],
+  'D':   ['D','E','F','G','A','B','c','d'],
+  'A':   ['A,','B,','C','D','E','F','G','A'],
+  'F':   ['F','G','A','B','c','d','e','f'],
+  'Bb':  ['B,','C','D','E','F','G','A','B'],
+  'Eb':  ['E','F','G','A','B','c','d','e'],
+  'Am':  ['A,','B,','C','D','E','F','G','A'],
+  'Em':  ['E','F','G','A','B','c','d','e'],
+  'Bm':  ['B,','C','D','E','F','G','A','B'],
+  'F#m': ['F,','G,','A,','B,','C','D','E','F'],
+  'Dm':  ['D','E','F','G','A','B','c','d'],
+  'Gm':  ['G,','A,','B,','C','D','E','F','G'],
+  'Cm':  ['C','D','E','F','G','A','B','c'],
+};
 
 // ── WAV 인코딩 유틸리티 ─────────────────────────────────────────
 function encodeWav(audioBuffer: AudioBuffer): Blob {
@@ -73,10 +91,10 @@ function createMetronomeClick(
   osc.connect(gain);
   gain.connect(audioCtx.destination);
 
-  osc.frequency.value = isAccent ? 1500 : 1000;
+  osc.frequency.value = 1000;
   osc.type = 'sine';
 
-  gain.gain.setValueAtTime(isAccent ? 0.8 : 0.5, startTime);
+  gain.gain.setValueAtTime(0.5, startTime);
   gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.05);
 
   osc.start(startTime);
@@ -90,6 +108,7 @@ export default function AbcjsRenderer({
   timeSignature = '4/4',
   tempo = 120,
   scaleTempo = 120,
+  keySignature = 'C',
 }: AbcjsRendererProps) {
   const paperRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -125,18 +144,33 @@ export default function AbcjsRenderer({
   // ── 오디오 전체 ABC 생성 (스케일 + 메트로놈 묵음 + 본 악보) ──────────
   const buildCombinedAbc = useCallback(() => {
     const { multiplier } = getTimingInfo();
-    const { top: scaleTop } = getScaleTimingInfo();
     const headerLines = abcString.split('\n').filter(line => /^[A-Z]:/.test(line));
     const bodyLines = abcString.split('\n').filter(line => !/^[A-Z]:/.test(line));
     const headerStr = headerLines.join('\n');
     let prepends = '';
 
-    // 1. 스케일
+    // 1. 조성별 스케일
     if (prependBasePitch) {
       const m = multiplier;
-      // 인라인 템포 마커 [Q:BPM] 사용
-      prepends += `[Q:${scaleTempo}] C${m} D${m} E${m} F${m} | G${m} A${m} B${m} c${m} | B${m} A${m} G${m} F${m} | E${m} D${m} C${m} z${m} | `;
-      // 본 곡 시작 전 원래 템포로 복구
+      const ascending = SCALE_NOTES[keySignature] || SCALE_NOTES['C'];
+      const descending = [...ascending].slice(0, -1).reverse();
+      const allNotes = [...ascending, ...descending, 'z']; // 8 + 7 + 1 = 16
+
+      const [, bottomStr] = timeSignature.split('/');
+      const bottom = parseInt(bottomStr, 10) || 4;
+      const sixteenthsPerBar = parseInt(timeSignature.split('/')[0], 10) * (16 / bottom);
+      let barPos = 0;
+
+      prepends += `[Q:${scaleTempo}] `;
+      for (const n of allNotes) {
+        prepends += `${n}${m} `;
+        barPos += m;
+        if (barPos >= sixteenthsPerBar) {
+          prepends += '| ';
+          barPos = 0;
+        }
+      }
+      if (barPos > 0) prepends += '| ';
       prepends += `[Q:${tempo}] `;
     }
 
@@ -151,7 +185,7 @@ export default function AbcjsRenderer({
     }
 
     return headerStr + '\n' + prepends + bodyLines.join('\n');
-  }, [abcString, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, scaleTempo, tempo]);
+  }, [abcString, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, scaleTempo, tempo, keySignature, timeSignature]);
 
   const handlePlay = useCallback(async () => {
     if (isPlaying) {
