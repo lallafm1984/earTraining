@@ -45,6 +45,7 @@ export default function ScoreEditor() {
   // New audio options
   const [prependBasePitch, setPrependBasePitch] = useState<boolean>(false);
   const [prependMetronome, setPrependMetronome] = useState<boolean>(false);
+  const [scaleTempo, setScaleTempo] = useState<number>(120);
 
   const scoreRef = useRef<HTMLDivElement>(null);
 
@@ -231,16 +232,31 @@ export default function ScoreEditor() {
               )}
             </div>
             
-            <div className="ml-auto flex gap-4">
-              <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
-                <input 
-                  type="checkbox" 
-                  checked={prependBasePitch} 
-                  onChange={(e) => setPrependBasePitch(e.target.checked)}
-                  className="rounded border-slate-300 text-indigo-500 focus:ring-indigo-500"
-                />
-                기본 음정(스케일) 추가
-              </label>
+            <div className="ml-auto flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={prependBasePitch} 
+                    onChange={(e) => setPrependBasePitch(e.target.checked)}
+                    className="rounded border-slate-300 text-indigo-500 focus:ring-indigo-500"
+                  />
+                  기본 음정(스케일) 추가
+                </label>
+                {prependBasePitch && (
+                  <div className="flex items-center gap-1 ml-1 scale-90">
+                    <span className="text-[10px] text-slate-400">BPM:</span>
+                    <input 
+                      type="number"
+                      value={scaleTempo}
+                      onChange={(e) => setScaleTempo(Number(e.target.value))}
+                      className="w-12 px-1 py-0.5 text-xs border rounded bg-slate-50 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      min="40"
+                      max="300"
+                    />
+                  </div>
+                )}
+              </div>
               <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
                 <input 
                   type="checkbox" 
@@ -321,6 +337,7 @@ export default function ScoreEditor() {
             prependMetronome={prependMetronome}
             timeSignature={state.timeSignature}
             tempo={state.tempo}
+            scaleTempo={scaleTempo}
           />
           <div className="text-center mt-4 text-xs text-slate-400">
             Rendered with abcjs

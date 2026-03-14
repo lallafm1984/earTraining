@@ -11,6 +11,7 @@ interface AbcjsRendererProps {
   prependMetronome?: boolean;
   timeSignature?: string;
   tempo?: number;
+  scaleTempo?: number;
 }
 
 // ── WAV 인코딩 유틸리티 ─────────────────────────────────────────
@@ -88,6 +89,7 @@ export default function AbcjsRenderer({
   prependMetronome,
   timeSignature = '4/4',
   tempo = 120,
+  scaleTempo = 120,
 }: AbcjsRendererProps) {
   const paperRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -105,20 +107,25 @@ export default function AbcjsRenderer({
     });
   }, [abcString]);
 
-  const getTimingInfo = useCallback(() => {
+  // 템포를 인자로 받는 타이밍 계산 함수
+  const getTimingForBpm = useCallback((bpm: number) => {
     const [topStr, bottomStr] = timeSignature.split('/');
     const top = parseInt(topStr, 10) || 4;
     const bottom = parseInt(bottomStr, 10) || 4;
-    const beatDuration = 60 / tempo;
+    const beatDuration = 60 / bpm;
     const actualBeatDuration = beatDuration * (4 / bottom);
     const multiplier = 16 / bottom;
 
     return { top, bottom, beatDuration, actualBeatDuration, multiplier };
-  }, [timeSignature, tempo]);
+  }, [timeSignature]);
+
+  const getTimingInfo = useCallback(() => getTimingForBpm(tempo), [getTimingForBpm, tempo]);
+  const getScaleTimingInfo = useCallback(() => getTimingForBpm(scaleTempo), [getTimingForBpm, scaleTempo]);
 
   // ── 오디오 전체 ABC 생성 (스케일 + 메트로놈 묵음 + 본 악보) ──────────
   const buildCombinedAbc = useCallback(() => {
-    const { top, multiplier } = getTimingInfo();
+    const { multiplier } = getTimingInfo();
+    const { top: scaleTop } = getScaleTimingInfo();
     const headerLines = abcString.split('\n').filter(line => /^[A-Z]:/.test(line));
     const bodyLines = abcString.split('\n').filter(line => !/^[A-Z]:/.test(line));
     const headerStr = headerLines.join('\n');
@@ -127,12 +134,16 @@ export default function AbcjsRenderer({
     // 1. 스케일
     if (prependBasePitch) {
       const m = multiplier;
-      prepends += `C${m} D${m} E${m} F${m} | G${m} A${m} B${m} c${m} | B${m} A${m} G${m} F${m} | E${m} D${m} C${m} z${m} | `;
+      // 인라인 템포 마커 [Q:BPM] 사용
+      prepends += `[Q:${scaleTempo}] C${m} D${m} E${m} F${m} | G${m} A${m} B${m} c${m} | B${m} A${m} G${m} F${m} | E${m} D${m} C${m} z${m} | `;
+      // 본 곡 시작 전 원래 템포로 복구
+      prepends += `[Q:${tempo}] `;
     }
 
     // 2. 메트로놈을 위한 묵음 공간
     if (prependMetronome) {
       const m = multiplier;
+      const { top } = getTimingInfo();
       for (let i = 0; i < top; i++) {
         prepends += `z${m} `;
       }
@@ -140,7 +151,7 @@ export default function AbcjsRenderer({
     }
 
     return headerStr + '\n' + prepends + bodyLines.join('\n');
-  }, [abcString, prependBasePitch, prependMetronome, getTimingInfo]);
+  }, [abcString, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, scaleTempo, tempo]);
 
   const handlePlay = useCallback(async () => {
     if (isPlaying) {
@@ -163,6 +174,7 @@ export default function AbcjsRenderer({
       }
 
       const { top, actualBeatDuration } = getTimingInfo();
+      const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
       const combinedAbc = buildCombinedAbc();
       const visualObj = abcjs.renderAbc("*", combinedAbc, { responsive: 'resize' })[0];
 
@@ -174,7 +186,8 @@ export default function AbcjsRenderer({
 
         // 메트로놈 클릭 스케줄링
         if (prependMetronome) {
-          const metronomeStartTime = prependBasePitch ? 16 * actualBeatDuration : 0;
+          // 스케일 이후 시작 시간 계산 (스케일은 16개 한박 음표 단위 고정 - 4마디)
+          const metronomeStartTime = prependBasePitch ? 16 * scaleBeatDuration : 0;
           for (let i = 0; i < top; i++) {
             createMetronomeClick(
               audioCtx,
@@ -203,36 +216,33 @@ export default function AbcjsRenderer({
       console.error('Playback error:', err);
       setIsPlaying(false);
     }
-  }, [isPlaying, buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo]);
+  }, [isPlaying, buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo]);
 
   const handleDownloadAudio = useCallback(async (title: string) => {
     setIsExporting(true);
     try {
       const { top, actualBeatDuration } = getTimingInfo();
+      const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
       const sampleRate = 44100;
       const combinedAbc = buildCombinedAbc();
       const visualObj = abcjs.renderAbc("*", combinedAbc, { responsive: 'resize' })[0];
 
       if (!visualObj) throw new Error('Could not render ABC for export');
 
-      // Estimate duration
+      // 렌더링 시간 추정
       let totalDuration = (visualObj as any).getTotalTime ? (visualObj as any).getTotalTime() : 0;
-      
-      // Fallback: If totalDuration is 0 or invalid, estimate based on bars
       if (!totalDuration || isNaN(totalDuration)) {
         const barCount = (combinedAbc.match(/\|/g) || []).length + 1;
-        totalDuration = barCount * top * actualBeatDuration;
+        // 스케일과 본 악보 마디 수를 나눠서 계산해야 하지만 대략적으로 합산
+        totalDuration = (prependBasePitch ? 16 * scaleBeatDuration : 0) + (barCount * top * actualBeatDuration);
       }
-      
-      // Add extra buffer
-      totalDuration += 2;
+      totalDuration += 2; // 여유분
 
       const numFrames = Math.max(1, Math.floor(sampleRate * totalDuration));
       if (isNaN(numFrames)) throw new Error('Invalid audio duration calculated');
 
       const offlineCtx = new OfflineAudioContext(2, numFrames, sampleRate);
       
-      // Patch for abcjs
       (offlineCtx as any).resume = () => Promise.resolve();
       (offlineCtx as any).suspend = () => Promise.resolve();
 
@@ -242,7 +252,7 @@ export default function AbcjsRenderer({
 
       // 메트로놈 클릭 스케줄링 (오프라인)
       if (prependMetronome) {
-        const metronomeStartTime = prependBasePitch ? 16 * actualBeatDuration : 0;
+        const metronomeStartTime = prependBasePitch ? 16 * scaleBeatDuration : 0;
         for (let i = 0; i < top; i++) {
           createMetronomeClick(
             offlineCtx,
@@ -271,7 +281,7 @@ export default function AbcjsRenderer({
     } finally {
       setIsExporting(false);
     }
-  }, [buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo]);
+  }, [buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo]);
 
   useEffect(() => {
     const handler = (e: any) => handleDownloadAudio(e.detail?.title);
