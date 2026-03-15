@@ -14,32 +14,54 @@ import {
 import { generateScore, Difficulty } from '@/lib/scoreGenerator';
 
 // ── SVG → PNG ──────────────────────────────────────────────────
+const TARGET_WIDTH = 1920;
+
 function svgToPng(container: HTMLElement, title: string) {
   const svg = container.querySelector('svg');
   if (!svg) { alert('악보 SVG를 찾을 수 없습니다.'); return; }
+
   const clone = svg.cloneNode(true) as SVGSVGElement;
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  if (!clone.getAttribute('width') || !clone.getAttribute('height')) {
-    const bbox = svg.getBoundingClientRect();
-    clone.setAttribute('width', String(bbox.width));
-    clone.setAttribute('height', String(bbox.height));
+
+  // 원본 SVG의 실제 크기 확보
+  const bbox = svg.getBoundingClientRect();
+  const srcW = parseFloat(clone.getAttribute('width') || '') || bbox.width || 800;
+  const srcH = parseFloat(clone.getAttribute('height') || '') || bbox.height || 400;
+
+  // 가로 1920px 기준으로 비율 유지 스케일 계산
+  const scale = TARGET_WIDTH / srcW;
+  const outW  = TARGET_WIDTH;
+  const outH  = Math.round(srcH * scale);
+
+  // clone SVG에 명시적 크기 설정 (viewBox 보존)
+  clone.setAttribute('width',  String(srcW));
+  clone.setAttribute('height', String(srcH));
+  if (!clone.getAttribute('viewBox')) {
+    clone.setAttribute('viewBox', `0 0 ${srcW} ${srcH}`);
   }
+
   const data = new XMLSerializer().serializeToString(clone);
   const blob = new Blob([data], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const img = new Image();
+  const url  = URL.createObjectURL(blob);
+  const img  = new Image();
+
   img.onload = () => {
-    const scale = 2;
     const canvas = document.createElement('canvas');
-    canvas.width = img.width * scale; canvas.height = img.height * scale;
+    canvas.width  = outW;
+    canvas.height = outH;
     const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.scale(scale, scale); ctx.drawImage(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, outW, outH);
+    ctx.drawImage(img, 0, 0, outW, outH);
     URL.revokeObjectURL(url);
+
     const a = document.createElement('a');
     const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     a.download = `${title || 'score'}_${ts}.png`;
-    a.href = canvas.toDataURL('image/png'); a.click();
+    a.href = canvas.toDataURL('image/png', 1.0);
+    a.click();
   };
   img.onerror = () => { URL.revokeObjectURL(url); alert('이미지 변환에 실패했습니다.'); };
   img.src = url;
