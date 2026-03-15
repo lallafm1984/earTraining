@@ -222,14 +222,35 @@ export default function ScoreEditor() {
   const abcString = generateAbc(state);
   const noteCount = state.notes.length + (state.bassNotes?.length ?? 0);
   const curNotes  = state.useGrandStaff && activeStaff === 'bass' ? (state.bassNotes || []) : state.notes;
+  const [leftPanelOpen, setLeftPanelOpen] = useState(false);
 
   return (
-    <div className="flex gap-5 h-full p-5">
+    <div className="flex flex-col md:flex-row gap-4 md:gap-5 h-full p-3 md:p-5">
 
       {/* ════════════════════════════════
-          왼쪽 사이드 패널 (320px 고정)
+          왼쪽 사이드 패널
+          - 모바일: 상단 접기/펴기 토글
+          - PC: 320px 고정 사이드바
           ════════════════════════════════ */}
-      <div className="w-80 shrink-0 flex flex-col gap-4 overflow-y-auto pb-4">
+
+      {/* 모바일: 설정 토글 버튼 */}
+      <div className="md:hidden">
+        <button
+          onClick={() => setLeftPanelOpen(v => !v)}
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-white rounded-xl border border-slate-200 shadow-sm text-sm font-medium text-slate-700"
+        >
+          <div className="flex items-center gap-2">
+            <Settings2 size={15} className="text-slate-400" />
+            <span>설정 / 재생 옵션 / 자동생성</span>
+            <span className="text-xs text-slate-400">
+              {state.keySignature} · {state.timeSignature} · {state.tempo}BPM
+            </span>
+          </div>
+          {leftPanelOpen ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
+        </button>
+      </div>
+
+      <div className={`md:w-80 md:shrink-0 flex flex-col gap-4 md:overflow-y-auto pb-4 ${leftPanelOpen ? 'flex' : 'hidden md:flex'}`}>
 
         {/* ── 악보 설정 ── */}
         <Card>
@@ -441,9 +462,9 @@ export default function ScoreEditor() {
       </div>
 
       {/* ════════════════════════════════
-          오른쪽 메인 영역
+          오른쪽(또는 모바일: 아래쪽) 메인 영역
           ════════════════════════════════ */}
-      <div className="flex-1 flex flex-col gap-4 min-w-0 overflow-y-auto pb-4">
+      <div className="flex-1 flex flex-col gap-4 min-w-0 md:overflow-y-auto pb-4">
 
         {/* ── 악보 표시 ── */}
         <Card>
@@ -533,7 +554,7 @@ export default function ScoreEditor() {
                 </div>
               )}
 
-              <div className="flex flex-wrap gap-x-6 gap-y-3 items-start">
+              <div className="flex flex-wrap gap-x-4 gap-y-3 items-start">
                 {/* 음표 길이 */}
                 <div>
                   <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">길이</p>
@@ -605,10 +626,10 @@ export default function ScoreEditor() {
               </div>
 
               {/* 음표 버튼 */}
-              <div className="flex gap-2 items-center">
+              <div className="flex gap-1.5 md:gap-2 items-center">
                 {PITCHES.map(p => (
                   <button key={p} onClick={() => handleAddNote(p)}
-                    className="flex-1 h-12 rounded-xl bg-white border-2 border-indigo-100 shadow-sm text-lg font-bold text-indigo-700 hover:bg-indigo-50 hover:border-indigo-300 active:scale-95 transition-all">
+                    className="flex-1 h-11 md:h-12 rounded-xl bg-white border-2 border-indigo-100 shadow-sm text-base md:text-lg font-bold text-indigo-700 hover:bg-indigo-50 hover:border-indigo-300 active:scale-95 transition-all">
                     {p}
                   </button>
                 ))}
