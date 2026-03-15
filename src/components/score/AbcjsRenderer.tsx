@@ -13,6 +13,46 @@ interface AbcjsRendererProps {
   tempo?: number;
   scaleTempo?: number;
   keySignature?: string;
+  metronomeFreq?: number;
+  segmentPlay?: boolean;
+  segmentMeasures?: number;
+  segmentWaitSeconds?: number;
+}
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+function splitBodyMeasures(body: string): string[] {
+  return body.replace(/\|\]\s*$/g, '').split('|').map(s => s.trim()).filter(Boolean);
+}
+
+function parseAbcParts(abc: string) {
+  const lines = abc.split('\n');
+  const isHdr = (l: string) => (/^[A-Z]:/.test(l) && !/^V:/.test(l)) || /^%%/.test(l);
+  const header = lines.filter(isHdr).join('\n');
+  const bodyLines = lines.filter(l => !isHdr(l));
+  const bodyStr = bodyLines.join('\n');
+  const isGrand = bodyStr.includes('V:V1');
+
+  if (!isGrand) {
+    return { header, isGrand: false, treble: splitBodyMeasures(bodyStr), bass: [] as string[] };
+  }
+  const v1 = bodyStr.match(/V:V1[^\n]*\n([\s\S]*?)(?=\nV:V2)/m);
+  const v2 = bodyStr.match(/V:V2[^\n]*\n([\s\S]*)$/m);
+  return {
+    header,
+    isGrand: true,
+    treble: splitBodyMeasures(v1?.[1] || ''),
+    bass: splitBodyMeasures(v2?.[1] || ''),
+  };
+}
+
+function rebuildSegmentAbc(header: string, isGrand: boolean, treble: string[], bass: string[]): string {
+  if (!isGrand) return header + '\n' + treble.join(' | ') + ' |]';
+  return (
+    header +
+    '\nV:V1 clef=treble\n' + treble.join(' | ') + ' |]' +
+    '\nV:V2 clef=bass\n' + bass.join(' | ') + ' |]'
+  );
 }
 
 const SCALE_NOTES: Record<string, string[]> = {
@@ -84,14 +124,15 @@ function encodeWav(audioBuffer: AudioBuffer): Blob {
 function createMetronomeClick(
   audioCtx: AudioContext | OfflineAudioContext,
   startTime: number,
-  isAccent: boolean
+  isAccent: boolean,
+  frequency: number = 1000
 ) {
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
   osc.connect(gain);
   gain.connect(audioCtx.destination);
 
-  osc.frequency.value = 1000;
+  osc.frequency.value = frequency;
   osc.type = 'sine';
 
   gain.gain.setValueAtTime(0.5, startTime);
@@ -109,12 +150,17 @@ export default function AbcjsRenderer({
   tempo = 120,
   scaleTempo = 120,
   keySignature = 'C',
+  metronomeFreq = 1000,
+  segmentPlay = false,
+  segmentMeasures = 2,
+  segmentWaitSeconds = 3,
 }: AbcjsRendererProps) {
   const paperRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const synthRef = useRef<any>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const cancelRef = useRef(false);
 
   useEffect(() => {
     if (!paperRef.current) return;
@@ -144,47 +190,107 @@ export default function AbcjsRenderer({
   // ── 오디오 전체 ABC 생성 (스케일 + 메트로놈 묵음 + 본 악보) ──────────
   const buildCombinedAbc = useCallback(() => {
     const { multiplier } = getTimingInfo();
-    const headerLines = abcString.split('\n').filter(line => /^[A-Z]:/.test(line));
-    const bodyLines = abcString.split('\n').filter(line => !/^[A-Z]:/.test(line));
+    const lines = abcString.split('\n');
+    const isHeader = (l: string) => (/^[A-Z]:/.test(l) && !/^V:/.test(l)) || /^%%/.test(l);
+    const headerLines = lines.filter(isHeader);
+    const bodyLines = lines.filter(l => !isHeader(l));
     const headerStr = headerLines.join('\n');
-    let prepends = '';
 
-    // 1. 조성별 스케일
+    // 큰보표(grand staff) 여부 감지
+    const isGrandStaff = abcString.includes('V:V1') || abcString.includes('V:V2');
+
+    // 스케일 프리픽스 문자열 생성
+    let scalePrepend = '';
     if (prependBasePitch) {
       const m = multiplier;
       const ascending = SCALE_NOTES[keySignature] || SCALE_NOTES['C'];
       const descending = [...ascending].slice(0, -1).reverse();
-      const allNotes = [...ascending, ...descending, 'z']; // 8 + 7 + 1 = 16
+      const allNotes = [...ascending, ...descending, 'z'];
 
-      const [, bottomStr] = timeSignature.split('/');
+      const [topStr, bottomStr] = timeSignature.split('/');
       const bottom = parseInt(bottomStr, 10) || 4;
-      const sixteenthsPerBar = parseInt(timeSignature.split('/')[0], 10) * (16 / bottom);
+      const sixteenthsPerBar = parseInt(topStr, 10) * (16 / bottom);
       let barPos = 0;
 
-      prepends += `[Q:${scaleTempo}] `;
+      scalePrepend += `[Q:${scaleTempo}] `;
       for (const n of allNotes) {
-        prepends += `${n}${m} `;
+        scalePrepend += `${n}${m} `;
         barPos += m;
         if (barPos >= sixteenthsPerBar) {
-          prepends += '| ';
+          scalePrepend += '| ';
           barPos = 0;
         }
       }
-      if (barPos > 0) prepends += '| ';
-      prepends += `[Q:${tempo}] `;
+      if (barPos > 0) scalePrepend += '| ';
+      scalePrepend += `[Q:${tempo}] `;
     }
 
-    // 2. 메트로놈을 위한 묵음 공간
+    // 메트로놈 묵음 프리픽스 문자열 생성
+    let metronomePrepend = '';
     if (prependMetronome) {
       const m = multiplier;
       const { top } = getTimingInfo();
       for (let i = 0; i < top; i++) {
-        prepends += `z${m} `;
+        metronomePrepend += `z${m} `;
       }
-      prepends += " | ";
+      metronomePrepend += '| ';
     }
 
-    return headerStr + '\n' + prepends + bodyLines.join('\n');
+    const prepends = scalePrepend + metronomePrepend;
+
+    if (!isGrandStaff) {
+      return headerStr + '\n' + prepends + bodyLines.join('\n');
+    }
+
+    // 큰보표: V:V1 보이스 앞에만 스케일/메트로놈 삽입,
+    // V:V2(bass)는 같은 길이의 묵음으로 채워줌
+    const bodyStr = bodyLines.join('\n');
+    const v1Match = bodyStr.match(/^(V:V1[^\n]*\n)([\s\S]*?)(?=\nV:V2|\n*$)/m);
+    const v2Match = bodyStr.match(/(\nV:V2[^\n]*\n)([\s\S]*)$/m);
+
+    if (!v1Match || !v2Match) {
+      // fallback: 파싱 실패시 단순 삽입
+      return headerStr + '\n' + prepends + bodyStr;
+    }
+
+    const v1Header = v1Match[1];
+    const v1Body = v1Match[2];
+    const v2Header = v2Match[1];
+    const v2Body = v2Match[2];
+
+    // bass 보이스용 묵음 계산 (스케일 + 메트로놈 길이만큼)
+    let bassSilence = '';
+    if (prependBasePitch) {
+      const m = multiplier;
+      const [topStr, bottomStr] = timeSignature.split('/');
+      const bottom = parseInt(bottomStr, 10) || 4;
+      const sixteenthsPerBar = parseInt(topStr, 10) * (16 / bottom);
+      // 16음표(상행8+하행7+쉼표1) = 16박
+      let barPos = 0;
+      for (let i = 0; i < 16; i++) {
+        bassSilence += `z${m} `;
+        barPos += m;
+        if (barPos >= sixteenthsPerBar) {
+          bassSilence += '| ';
+          barPos = 0;
+        }
+      }
+      if (barPos > 0) bassSilence += '| ';
+    }
+    if (prependMetronome) {
+      const m = multiplier;
+      const { top } = getTimingInfo();
+      for (let i = 0; i < top; i++) {
+        bassSilence += `z${m} `;
+      }
+      bassSilence += '| ';
+    }
+
+    return (
+      headerStr + '\n' +
+      v1Header + prepends + v1Body +
+      v2Header + bassSilence + v2Body
+    );
   }, [abcString, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, scaleTempo, tempo, keySignature, timeSignature]);
 
   const handlePlay = useCallback(async () => {
@@ -210,23 +316,23 @@ export default function AbcjsRenderer({
       const { top, actualBeatDuration } = getTimingInfo();
       const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
       const combinedAbc = buildCombinedAbc();
-      const visualObj = abcjs.renderAbc("*", combinedAbc, { responsive: 'resize' })[0];
+      const parsed = abcjs.renderAbc("*", combinedAbc, { responsive: 'resize' });
+      const visualObj = parsed?.[0];
 
-      if (visualObj) {
+      if (visualObj && (visualObj as any).lines?.length) {
         const synth = new abcjs.synth.CreateSynth();
         synthRef.current = synth;
         await synth.init({ audioContext: audioCtx, visualObj });
         await synth.prime();
 
-        // 메트로놈 클릭 스케줄링
         if (prependMetronome) {
-          // 스케일 이후 시작 시간 계산 (스케일은 16개 한박 음표 단위 고정 - 4마디)
           const metronomeStartTime = prependBasePitch ? 16 * scaleBeatDuration : 0;
           for (let i = 0; i < top; i++) {
             createMetronomeClick(
               audioCtx,
               audioCtx.currentTime + metronomeStartTime + i * actualBeatDuration,
-              i === 0
+              i === 0,
+              metronomeFreq
             );
           }
         }
@@ -250,7 +356,136 @@ export default function AbcjsRenderer({
       console.error('Playback error:', err);
       setIsPlaying(false);
     }
-  }, [isPlaying, buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo]);
+  }, [isPlaying, buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, metronomeFreq]);
+
+  // ── 마디연주 (segmented playback) ────────────────────────────────
+  // durationSec: 예상 재생 시간(초). 이 시간만큼 기다린 후 resolve.
+  const playSingleAbc = useCallback(async (
+    audioCtx: AudioContext,
+    abc: string,
+    durationSec: number
+  ): Promise<void> => {
+    try {
+      const parsed = abcjs.renderAbc("*", abc, { responsive: 'resize' });
+      const vo = parsed?.[0];
+      if (!vo || !(vo as any).lines?.length) return;
+
+      const synth = new abcjs.synth.CreateSynth();
+      synthRef.current = synth;
+      await synth.init({ audioContext: audioCtx, visualObj: vo });
+      await synth.prime();
+      synth.start();
+
+      // 실제 재생 시간만큼 대기 (100ms 단위로 취소 여부 체크)
+      const waitMs = durationSec * 1000 + 200; // 200ms 여유
+      const step = 100;
+      let elapsed = 0;
+      while (elapsed < waitMs) {
+        if (cancelRef.current) {
+          try { synth.stop(); } catch { /* ignore */ }
+          return;
+        }
+        await sleep(step);
+        elapsed += step;
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const handleSegmentPlay = useCallback(async () => {
+    if (isPlaying) {
+      cancelRef.current = true;
+      if (synthRef.current) try { synthRef.current.stop(); } catch { /* ignore */ }
+      setIsPlaying(false);
+      return;
+    }
+
+    setIsPlaying(true);
+    cancelRef.current = false;
+
+    try {
+      if (!audioCtxRef.current || audioCtxRef.current.state === 'closed') {
+        audioCtxRef.current = new AudioContext();
+      }
+      const audioCtx = audioCtxRef.current;
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+      const { top, actualBeatDuration, multiplier } = getTimingInfo();
+      const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
+      // 1박(beat) 시간: actualBeatDuration 초
+      // 1마디 시간: top * actualBeatDuration 초
+      const measureDurationSec = top * actualBeatDuration;
+
+      // 1) 스케일 재생 (옵션)
+      if (prependBasePitch && !cancelRef.current) {
+        const { header } = parseAbcParts(abcString);
+        const ascending = SCALE_NOTES[keySignature] || SCALE_NOTES['C'];
+        const descending = [...ascending].slice(0, -1).reverse();
+        const allNotes = [...ascending, ...descending, 'z'];
+        const [topStr, bottomStr] = timeSignature.split('/');
+        const bottom = parseInt(bottomStr, 10) || 4;
+        const sixteenthsPerBar = parseInt(topStr, 10) * (16 / bottom);
+        let barPos = 0;
+        let scaleBody = `[Q:${scaleTempo}] `;
+        for (const n of allNotes) {
+          scaleBody += `${n}${multiplier} `;
+          barPos += multiplier;
+          if (barPos >= sixteenthsPerBar) { scaleBody += '| '; barPos = 0; }
+        }
+        if (barPos > 0) scaleBody += '| ';
+        const cleanHeader = header.replace(/^%%staves.*$/gm, '').replace(/^%%barsperstaff.*$/gm, '');
+        const scaleAbc = cleanHeader + '\n' + scaleBody + '|]';
+        // 스케일 16음 × 1음당 걸리는 시간
+        const scaleNoteDur = scaleBeatDuration; // 1박 단위 음표
+        const scaleDurationSec = 16 * scaleNoteDur;
+        await playSingleAbc(audioCtx, scaleAbc, scaleDurationSec);
+        if (cancelRef.current) { setIsPlaying(false); return; }
+      }
+
+      // 2) 본 악보를 마디 단위로 분할
+      const { header, isGrand, treble, bass } = parseAbcParts(abcString);
+      const totalMeasures = treble.length;
+
+      for (let start = 0; start < totalMeasures; start += segmentMeasures) {
+        if (cancelRef.current) break;
+
+        // 메트로놈 1마디 클릭
+        if (prependMetronome || start > 0) {
+          for (let j = 0; j < top; j++) {
+            createMetronomeClick(audioCtx, audioCtx.currentTime + j * actualBeatDuration, j === 0, metronomeFreq);
+          }
+          await sleep(measureDurationSec * 1000);
+          if (cancelRef.current) break;
+        }
+
+        // 세그먼트 ABC 빌드 & 재생
+        const end = Math.min(start + segmentMeasures, totalMeasures);
+        const actualSegCount = end - start;
+        const segDurationSec = actualSegCount * measureDurationSec;
+        const segAbc = rebuildSegmentAbc(
+          header, isGrand,
+          treble.slice(start, end),
+          isGrand ? bass.slice(start, end) : []
+        );
+        await playSingleAbc(audioCtx, segAbc, segDurationSec);
+        if (cancelRef.current) break;
+
+        // 마지막 세그먼트가 아닌 경우 대기
+        if (end < totalMeasures) {
+          await sleep(segmentWaitSeconds * 1000);
+        }
+      }
+    } catch (err) {
+      console.error('Segment playback error:', err);
+    }
+
+    setIsPlaying(false);
+  }, [isPlaying, abcString, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo,
+      playSingleAbc, keySignature, timeSignature, scaleTempo, metronomeFreq, segmentMeasures, segmentWaitSeconds]);
+
+  const onPlayClick = useCallback(() => {
+    if (segmentPlay) return handleSegmentPlay();
+    return handlePlay();
+  }, [segmentPlay, handleSegmentPlay, handlePlay]);
 
   const handleDownloadAudio = useCallback(async (title: string) => {
     setIsExporting(true);
@@ -259,9 +494,10 @@ export default function AbcjsRenderer({
       const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
       const sampleRate = 44100;
       const combinedAbc = buildCombinedAbc();
-      const visualObj = abcjs.renderAbc("*", combinedAbc, { responsive: 'resize' })[0];
+      const parsed = abcjs.renderAbc("*", combinedAbc, { responsive: 'resize' });
+      const visualObj = parsed?.[0];
 
-      if (!visualObj) throw new Error('Could not render ABC for export');
+      if (!visualObj || !(visualObj as any).lines?.length) throw new Error('Could not render ABC for export');
 
       // 렌더링 시간 추정
       let totalDuration = (visualObj as any).getTotalTime ? (visualObj as any).getTotalTime() : 0;
@@ -284,14 +520,14 @@ export default function AbcjsRenderer({
       await synth.init({ audioContext: offlineCtx as any, visualObj });
       await synth.prime();
 
-      // 메트로놈 클릭 스케줄링 (오프라인)
       if (prependMetronome) {
         const metronomeStartTime = prependBasePitch ? 16 * scaleBeatDuration : 0;
         for (let i = 0; i < top; i++) {
           createMetronomeClick(
             offlineCtx,
             metronomeStartTime + i * actualBeatDuration,
-            i === 0
+            i === 0,
+            metronomeFreq
           );
         }
       }
@@ -303,8 +539,9 @@ export default function AbcjsRenderer({
 
       const url = URL.createObjectURL(wavBlob);
       const a = document.createElement('a');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       a.href = url;
-      a.download = `${title || 'score'}.wav`;
+      a.download = `${title || 'score'}_${timestamp}.wav`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -315,7 +552,7 @@ export default function AbcjsRenderer({
     } finally {
       setIsExporting(false);
     }
-  }, [buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo]);
+  }, [buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, metronomeFreq]);
 
   useEffect(() => {
     const handler = (e: any) => handleDownloadAudio(e.detail?.title);
@@ -328,7 +565,7 @@ export default function AbcjsRenderer({
       <div ref={paperRef} className="w-full min-h-[200px] bg-white text-black p-4 rounded-xl border border-border shadow-sm overflow-x-auto" />
       <div className="flex items-center gap-3 bg-slate-100 p-3 rounded-xl max-w-md mx-auto w-full">
         <button
-          onClick={handlePlay}
+          onClick={onPlayClick}
           className={`flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium transition-all shadow-sm ${
             isPlaying ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-indigo-500 text-white hover:bg-indigo-600'
           }`}

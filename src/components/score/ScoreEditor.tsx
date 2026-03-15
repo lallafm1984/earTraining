@@ -3,7 +3,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { ScoreState, ScoreNote, NoteDuration, Accidental, PitchName, TupletType, generateAbc, getTupletNoteDuration } from '@/lib/scoreUtils';
 import AbcjsRenderer from './AbcjsRenderer';
-import { Download, Trash2, Undo, FileAudio, Save, FolderOpen, X, Keyboard } from 'lucide-react';
+import { Download, Trash2, Undo, FileAudio, Save, FolderOpen, X, Keyboard, Wand2 } from 'lucide-react';
+import { generateScore, Difficulty } from '@/lib/scoreGenerator';
 
 function svgToPng(container: HTMLElement, title: string) {
   const svg = container.querySelector('svg');
@@ -35,7 +36,8 @@ function svgToPng(container: HTMLElement, title: string) {
     URL.revokeObjectURL(url);
 
     const a = document.createElement('a');
-    a.download = `${title || 'score'}.png`;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.download = `${title || 'score'}_${timestamp}.png`;
     a.href = canvas.toDataURL('image/png');
     a.click();
   };
@@ -101,14 +103,27 @@ export default function ScoreEditor() {
   const [tuplet, setTuplet] = useState<TupletType>('');
   const [tupletCounter, setTupletCounter] = useState(0); // current note index in tuplet group
 
-  // New audio options
+  const [activeStaff, setActiveStaff] = useState<'treble' | 'bass'>('treble');
+
+  // Audio options
   const [prependBasePitch, setPrependBasePitch] = useState<boolean>(false);
   const [prependMetronome, setPrependMetronome] = useState<boolean>(false);
   const [scaleTempo, setScaleTempo] = useState<number>(120);
+  const [metronomeFreq, setMetronomeFreq] = useState<number>(1000);
+
+  // 마디연주 옵션
+  const [segmentPlay, setSegmentPlay] = useState<boolean>(false);
+  const [segmentMeasures, setSegmentMeasures] = useState<number>(2);
+  const [segmentWaitSeconds, setSegmentWaitSeconds] = useState<number>(3);
 
   const [savedScores, setSavedScores] = useState<SavedScore[]>([]);
   const [showSavedList, setShowSavedList] = useState(false);
   const [previewScore, setPreviewScore] = useState<SavedScore | null>(null);
+
+  // Auto-generate options
+  const [showGenPanel, setShowGenPanel] = useState(false);
+  const [genDifficulty, setGenDifficulty] = useState<Difficulty>('beginner');
+  const [genMeasures, setGenMeasures] = useState<number>(4);
 
   const scoreRef = useRef<HTMLDivElement>(null);
   const previewScoreRef = useRef<HTMLDivElement>(null);
@@ -129,18 +144,23 @@ export default function ScoreEditor() {
       accidental: isRest ? '' : accidental,
       duration,
       tie: isRest ? false : tie,
-      // Only the FIRST note in a tuplet group gets the tuplet marker
       tuplet: isFirstInTuplet ? tuplet : undefined,
       tupletSpan: isFirstInTuplet ? duration : undefined,
       tupletNoteDur: isFirstInTuplet ? getTupletNoteDuration(tuplet, duration) : undefined,
     };
-    setState((prev) => ({ ...prev, notes: [...prev.notes, newNote] }));
 
-    // Track tuplet group progress
+    const isBass = state.useGrandStaff && activeStaff === 'bass';
+    setState((prev) => ({
+      ...prev,
+      ...(isBass
+        ? { bassNotes: [...(prev.bassNotes || []), newNote] }
+        : { notes: [...prev.notes, newNote] }),
+    }));
+
     if (tuplet && !isRest) {
       const next = tupletCounter + 1;
       if (next >= tupletCount) {
-        setTupletCounter(0); // group complete, reset for next group
+        setTupletCounter(0);
       } else {
         setTupletCounter(next);
       }
@@ -148,12 +168,21 @@ export default function ScoreEditor() {
   };
 
   const handleUndo = () => {
-    setState((prev) => ({ ...prev, notes: prev.notes.slice(0, -1) }));
+    const isBass = state.useGrandStaff && activeStaff === 'bass';
+    setState((prev) => isBass
+      ? { ...prev, bassNotes: (prev.bassNotes || []).slice(0, -1) }
+      : { ...prev, notes: prev.notes.slice(0, -1) }
+    );
   };
 
   const handleClear = () => {
-    if (confirm('모든 음표를 지우시겠습니까?')) {
-      setState((prev) => ({ ...prev, notes: [] }));
+    const isBass = state.useGrandStaff && activeStaff === 'bass';
+    const label = isBass ? '낮은음자리표의 모든 음표를' : '높은음자리표의 모든 음표를';
+    if (confirm(`${label} 지우시겠습니까?`)) {
+      setState((prev) => isBass
+        ? { ...prev, bassNotes: [] }
+        : { ...prev, notes: [] }
+      );
     }
   };
 
@@ -161,6 +190,22 @@ export default function ScoreEditor() {
     if (!scoreRef.current) return;
     svgToPng(scoreRef.current, state.title);
   };
+
+  const handleGenerate = useCallback(() => {
+    const result = generateScore({
+      keySignature: state.keySignature,
+      timeSignature: state.timeSignature,
+      difficulty: genDifficulty,
+      measures: genMeasures,
+      useGrandStaff: state.useGrandStaff ?? false,
+    });
+    setState(prev => ({
+      ...prev,
+      notes: result.trebleNotes,
+      bassNotes: result.bassNotes,
+    }));
+    setShowGenPanel(false);
+  }, [state.keySignature, state.timeSignature, state.useGrandStaff, genDifficulty, genMeasures]);
 
   const handleSave = useCallback(() => {
     const scores = getSavedScores();
@@ -223,7 +268,7 @@ export default function ScoreEditor() {
         setOctave(prev => Math.min(6, prev + 1));
       } else if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setOctave(prev => Math.max(3, prev - 1));
+        setOctave(prev => Math.max(2, prev - 1));
       }
     };
 
@@ -298,7 +343,38 @@ export default function ScoreEditor() {
             min={40} max={240}
           />
         </div>
+        <label className="flex items-center gap-2 cursor-pointer self-center">
+          <input
+            type="checkbox"
+            checked={state.useGrandStaff ?? false}
+            onChange={(e) => setState(prev => ({ ...prev, useGrandStaff: e.target.checked, bassNotes: prev.bassNotes || [] }))}
+            className="rounded border-slate-300 text-indigo-500 focus:ring-indigo-500"
+          />
+          <span className="text-sm text-slate-700 font-medium">큰보표 (Grand Staff)</span>
+        </label>
       </div>
+
+      {/* Grand Staff: staff selector */}
+      {state.useGrandStaff && (
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-slate-500">입력 보표:</span>
+          <button
+            onClick={() => setActiveStaff('treble')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeStaff === 'treble' ? 'bg-indigo-500 text-white shadow-md' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50'}`}
+          >
+            🎼 높은음자리 (Treble)
+          </button>
+          <button
+            onClick={() => setActiveStaff('bass')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${activeStaff === 'bass' ? 'bg-indigo-500 text-white shadow-md' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50'}`}
+          >
+            🎵 낮은음자리 (Bass)
+          </button>
+          <span className="text-xs text-slate-400 ml-2">
+            높은음자리: {state.notes.length}개 · 낮은음자리: {(state.bassNotes || []).length}개
+          </span>
+        </div>
+      )}
 
       {/* Note Input Palette */}
       <div className="bg-slate-50 p-5 rounded-xl border border-slate-200">
@@ -336,7 +412,7 @@ export default function ScoreEditor() {
             {/* Octave */}
             <div className="flex items-center gap-2 bg-white px-3 py-1.5 border rounded-lg shadow-sm">
               <span className="text-sm text-slate-600 font-medium">옥타브:</span>
-              <button onClick={() => setOctave(prev => Math.max(3, prev - 1))} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-xs">-</button>
+              <button onClick={() => setOctave(prev => Math.max(2, prev - 1))} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-xs">-</button>
               <span className="w-4 text-center text-sm font-bold">{octave}</span>
               <button onClick={() => setOctave(prev => Math.min(6, prev + 1))} className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-xs">+</button>
             </div>
@@ -406,6 +482,55 @@ export default function ScoreEditor() {
                 />
                 메트로놈 추가
               </label>
+              {prependMetronome && (
+                <div className="flex items-center gap-1 scale-90">
+                  <span className="text-[10px] text-slate-400">Hz:</span>
+                  <input
+                    type="number"
+                    value={metronomeFreq}
+                    onChange={(e) => setMetronomeFreq(Number(e.target.value) || 1000)}
+                    className="w-16 px-1 py-0.5 text-xs border rounded bg-slate-50 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    min="200"
+                    max="4000"
+                  />
+                </div>
+              )}
+
+              <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={segmentPlay}
+                  onChange={(e) => setSegmentPlay(e.target.checked)}
+                  className="rounded border-slate-300 text-indigo-500 focus:ring-indigo-500"
+                />
+                마디연주
+              </label>
+              {segmentPlay && (
+                <div className="flex items-center gap-2 scale-90">
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-400">마디:</span>
+                    <input
+                      type="number"
+                      value={segmentMeasures}
+                      onChange={(e) => setSegmentMeasures(Math.max(1, Number(e.target.value) || 1))}
+                      className="w-12 px-1 py-0.5 text-xs border rounded bg-slate-50 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      min="1"
+                      max="16"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-[10px] text-slate-400">대기(초):</span>
+                    <input
+                      type="number"
+                      value={segmentWaitSeconds}
+                      onChange={(e) => setSegmentWaitSeconds(Math.max(0, Number(e.target.value) || 0))}
+                      className="w-12 px-1 py-0.5 text-xs border rounded bg-slate-50 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      min="0"
+                      max="30"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
           </div>
@@ -433,14 +558,14 @@ export default function ScoreEditor() {
 
             <button
               onClick={handleUndo}
-              disabled={state.notes.length === 0}
+              disabled={(state.useGrandStaff && activeStaff === 'bass' ? (state.bassNotes || []) : state.notes).length === 0}
               className="flex items-center gap-1.5 px-4 h-10 rounded-lg bg-white border text-slate-600 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <Undo size={16} /> 되돌리기
             </button>
             <button
               onClick={handleClear}
-              disabled={state.notes.length === 0}
+              disabled={(state.useGrandStaff && activeStaff === 'bass' ? (state.bassNotes || []) : state.notes).length === 0}
               className="flex items-center gap-1.5 px-4 h-10 rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
             >
               <Trash2 size={16} /> 전체 지우기
@@ -451,6 +576,12 @@ export default function ScoreEditor() {
 
       {/* Action Buttons */}
       <div className="flex flex-wrap gap-2 items-center">
+        <button
+          onClick={() => setShowGenPanel(!showGenPanel)}
+          className="flex items-center gap-2 bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-600 shadow-md transition-colors"
+        >
+          <Wand2 size={16} /> 자동 생성
+        </button>
         <button
           onClick={handleSave}
           className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 shadow-md transition-colors"
@@ -480,6 +611,63 @@ export default function ScoreEditor() {
           <FileAudio size={16} /> WAV 음원 저장
         </button>
       </div>
+
+      {/* Auto Generate Panel */}
+      {showGenPanel && (
+        <div className="bg-amber-50 rounded-xl border border-amber-200 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-amber-800 flex items-center gap-2"><Wand2 size={16} /> 자동 악보 생성</h3>
+            <button onClick={() => setShowGenPanel(false)} className="text-amber-400 hover:text-amber-600"><X size={18} /></button>
+          </div>
+          <div className="flex flex-wrap gap-6 items-end">
+            <div>
+              <label className="block text-xs font-medium text-amber-700 mb-1">난이도</label>
+              <div className="flex bg-white border border-amber-200 rounded-lg overflow-hidden">
+                <button
+                  onClick={() => setGenDifficulty('beginner')}
+                  className={`px-4 py-2 text-sm transition-colors ${genDifficulty === 'beginner' ? 'bg-amber-500 text-white font-medium' : 'text-amber-700 hover:bg-amber-100'}`}
+                >
+                  초급
+                </button>
+                <button
+                  onClick={() => setGenDifficulty('intermediate')}
+                  className={`px-4 py-2 text-sm transition-colors ${genDifficulty === 'intermediate' ? 'bg-amber-500 text-white font-medium' : 'text-amber-700 hover:bg-amber-100'}`}
+                >
+                  중급
+                </button>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-amber-700 mb-1">마디 수</label>
+              <div className="flex bg-white border border-amber-200 rounded-lg overflow-hidden">
+                {[4, 8, 12, 16].map(n => (
+                  <button
+                    key={n}
+                    onClick={() => setGenMeasures(n)}
+                    className={`px-3 py-2 text-sm transition-colors ${genMeasures === n ? 'bg-amber-500 text-white font-medium' : 'text-amber-700 hover:bg-amber-100'}`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="text-xs text-amber-600 max-w-xs">
+              {genDifficulty === 'beginner'
+                ? '온·2분·4분음표, 2도(80%)·3도(20%) 이동'
+                : '8분음표·점4분 포함, 4·5·8도 도약 허용'}
+            </div>
+            <button
+              onClick={handleGenerate}
+              className="px-6 py-2.5 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700 shadow-md transition-colors"
+            >
+              생성하기
+            </button>
+          </div>
+          <p className="text-[10px] text-amber-500 mt-3">
+            ※ 현재 설정된 조성·박자·큰보표 여부가 그대로 적용됩니다. 기존 음표는 교체됩니다.
+          </p>
+        </div>
+      )}
 
       {/* Saved Scores List */}
       {showSavedList && (
@@ -560,6 +748,10 @@ export default function ScoreEditor() {
           tempo={state.tempo}
           scaleTempo={scaleTempo}
           keySignature={state.keySignature}
+          metronomeFreq={metronomeFreq}
+          segmentPlay={segmentPlay}
+          segmentMeasures={segmentMeasures}
+          segmentWaitSeconds={segmentWaitSeconds}
         />
       </div>
 

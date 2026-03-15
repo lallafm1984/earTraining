@@ -28,6 +28,8 @@ export interface ScoreState {
   timeSignature: string;
   tempo: number;
   notes: ScoreNote[];
+  bassNotes?: ScoreNote[];
+  useGrandStaff?: boolean;
 }
 
 /**
@@ -112,69 +114,50 @@ export function getBeamGroupSixteenths(timeSignature: string): number {
   return 16 / bottom;
 }
 
-/**
- * ABC format uses specific ASCII characters to represent notes.
- * L:1/16 is used as the base length.
- */
-export function generateAbc(state: ScoreState): string {
-  const header = [
-    `X: 1`,
-    `T: ${state.title || 'Score'}`,
-    `M: ${state.timeSignature}`,
-    `L: 1/16`,
-    `Q: 1/4=${state.tempo}`,
-    `K: ${state.keySignature}`
-  ].join('\n');
+function pitchToAbc(pitch: string, octave: number, accidental: Accidental): string {
+  if (pitch === 'rest') return 'z';
+  let s = '';
+  if (accidental === '#') s += '^';
+  else if (accidental === 'b') s += '_';
+  else if (accidental === 'n') s += '=';
 
-  if (state.notes.length === 0) {
-    return header + '\n|]';
+  if (octave <= 2) {
+    s += pitch + ',' + ','.repeat(3 - octave);
+  } else if (octave === 3) {
+    s += pitch + ',';
+  } else if (octave === 4) {
+    s += pitch;
+  } else if (octave === 5) {
+    s += pitch.toLowerCase();
+  } else if (octave >= 6) {
+    s += pitch.toLowerCase() + "'".repeat(octave - 5);
   }
+  return s;
+}
 
-  const sixteenthsPerBar = getSixteenthsPerBar(state.timeSignature);
-  const beamGroupSize = getBeamGroupSixteenths(state.timeSignature);
+function generateNotesAbc(notes: ScoreNote[], timeSignature: string): string {
+  if (notes.length === 0) return '|]';
+
+  const sixteenthsPerBar = getSixteenthsPerBar(timeSignature);
+  const beamGroupSize = getBeamGroupSixteenths(timeSignature);
   let currentBarSixteenths = 0;
   let abcNotes = '';
   let tupletRemaining = 0;
   let currentTupletNoteDur = 0;
   let currentTupletSpanSixteenths = 0;
 
-  state.notes.forEach((note, index) => {
-    // Handle tuplet start marker
+  notes.forEach((note) => {
     if (note.tuplet && tupletRemaining === 0) {
       const p = parseInt(note.tuplet, 10);
-      const q = note.tuplet === '3' ? 2 : 4; // 3:2 or p:4
+      const q = note.tuplet === '3' ? 2 : 4;
       abcNotes += `(${p}:${q}:${p}`;
       tupletRemaining = p;
       currentTupletNoteDur = note.tupletNoteDur || getTupletNoteDuration(note.tuplet, note.tupletSpan || note.duration);
       currentTupletSpanSixteenths = getTupletActualSixteenths(note.tuplet, note.tupletSpan || note.duration);
     }
 
-    let abcPitch = '';
-    
-    // 1. Accidental
-    if (note.pitch !== 'rest') {
-      if (note.accidental === '#') abcPitch += '^';
-      else if (note.accidental === 'b') abcPitch += '_';
-      else if (note.accidental === 'n') abcPitch += '=';
+    const abcPitch = pitchToAbc(note.pitch, note.octave, note.pitch === 'rest' ? '' : note.accidental);
 
-      // 2. Pitch and Octave
-      const p = note.pitch;
-      if (note.octave === 3) {
-        abcPitch += p + ',';
-      } else if (note.octave === 4) {
-        abcPitch += p;
-      } else if (note.octave === 5) {
-        abcPitch += p.toLowerCase();
-      } else if (note.octave === 6) {
-        abcPitch += p.toLowerCase() + "'";
-      } else {
-        abcPitch += p;
-      }
-    } else {
-      abcPitch = 'z'; // Rest
-    }
-
-    // 3. Duration
     let dur16ths: number;
     if (tupletRemaining > 0) {
       dur16ths = currentTupletNoteDur;
@@ -182,28 +165,24 @@ export function generateAbc(state: ScoreState): string {
       dur16ths = durationToSixteenths(note.duration);
     }
     const durStr = dur16ths === 1 ? '' : dur16ths.toString();
-    
-    abcNotes += abcPitch + durStr;
-    if (note.tie) {
-      abcNotes += '-';
-    }
 
-    // 4. Track positions and apply beaming rules
+    abcNotes += abcPitch + durStr;
+    if (note.tie) abcNotes += '-';
+
     if (tupletRemaining > 0) {
       tupletRemaining--;
       if (tupletRemaining === 0) {
         currentBarSixteenths += currentTupletSpanSixteenths;
       }
       if (tupletRemaining > 0) {
-        // Still inside tuplet group — no space (beam connected)
+        // beam connected inside tuplet
       } else {
         abcNotes += ' ';
       }
     } else {
       currentBarSixteenths += dur16ths;
-      const isBeamable = dur16ths <= 3; // 8th, dotted 8th, 16th
+      const isBeamable = dur16ths <= 3;
       const isAtBeatBoundary = currentBarSixteenths % beamGroupSize === 0;
-
       if (!isBeamable || isAtBeatBoundary || currentBarSixteenths >= sixteenthsPerBar) {
         abcNotes += ' ';
       }
@@ -215,12 +194,40 @@ export function generateAbc(state: ScoreState): string {
     }
   });
 
-  // End the score
   if (!abcNotes.endsWith('| ')) {
     abcNotes += '|]';
   } else {
     abcNotes = abcNotes.slice(0, -2) + ' |]';
   }
+  return abcNotes.trim();
+}
 
-  return header + '\n' + abcNotes.trim();
+/**
+ * ABC format uses specific ASCII characters to represent notes.
+ * L:1/16 is used as the base length.
+ */
+export function generateAbc(state: ScoreState): string {
+  const useGrandStaff = state.useGrandStaff ?? false;
+  const bassNotes = state.bassNotes ?? [];
+
+  const directives: string[] = ['%%barsperstaff 4'];
+  if (useGrandStaff) directives.push('%%staves {V1 V2}');
+
+  const header = [
+    `X: 1`,
+    `T: ${state.title || 'Score'}`,
+    `M: ${state.timeSignature}`,
+    `L: 1/16`,
+    `Q: 1/4=${state.tempo}`,
+    ...directives,
+    `K: ${state.keySignature}`
+  ].join('\n');
+
+  if (!useGrandStaff) {
+    return header + '\n' + generateNotesAbc(state.notes, state.timeSignature);
+  }
+
+  const treble = generateNotesAbc(state.notes, state.timeSignature);
+  const bass = generateNotesAbc(bassNotes, state.timeSignature);
+  return header + '\nV:V1 clef=treble\n' + treble + '\nV:V2 clef=bass\n' + bass;
 }
