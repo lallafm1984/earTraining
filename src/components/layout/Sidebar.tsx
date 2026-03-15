@@ -4,36 +4,12 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { logout } from '@/actions/auth'
 import {
-  LayoutDashboard,
-  BookOpen,
-  PlusCircle,
-  Music2,
   FileMusic,
   LogOut,
   GraduationCap,
 } from 'lucide-react'
 
 const navItems = [
-  {
-    href: '/dashboard',
-    label: '대시보드',
-    icon: LayoutDashboard,
-  },
-  {
-    href: '/questions',
-    label: '문제 은행',
-    icon: BookOpen,
-  },
-  {
-    href: '/questions/new',
-    label: '새 문제 출제',
-    icon: PlusCircle,
-  },
-  {
-    href: '/sessions',
-    label: '수업 세션',
-    icon: Music2,
-  },
   {
     href: '/score-creator',
     label: '악보 제작',
@@ -56,7 +32,7 @@ export default function Sidebar() {
       <div className="px-6 py-5" style={{ borderBottom: '1px solid var(--border)' }}>
         <div className="flex items-center gap-3">
           <div
-            className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
             style={{ background: 'var(--primary)' }}
           >
             <GraduationCap size={20} color="white" />

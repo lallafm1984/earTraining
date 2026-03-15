@@ -14,9 +14,8 @@ interface AbcjsRendererProps {
   scaleTempo?: number;
   keySignature?: string;
   metronomeFreq?: number;
-  segmentPlay?: boolean;
-  segmentMeasures?: number;
-  segmentWaitSeconds?: number;
+  examMode?: boolean;
+  examWaitSeconds?: number;
 }
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -142,6 +141,19 @@ function createMetronomeClick(
   osc.stop(startTime + 0.05);
 }
 
+function downloadWav(buffer: AudioBuffer, title: string) {
+  const wavBlob = encodeWav(buffer);
+  const url = URL.createObjectURL(wavBlob);
+  const a = document.createElement('a');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  a.href = url;
+  a.download = `${title || 'score'}_${timestamp}.wav`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 export default function AbcjsRenderer({
   abcString,
   prependBasePitch,
@@ -151,9 +163,8 @@ export default function AbcjsRenderer({
   scaleTempo = 120,
   keySignature = 'C',
   metronomeFreq = 1000,
-  segmentPlay = false,
-  segmentMeasures = 2,
-  segmentWaitSeconds = 3,
+  examMode = false,
+  examWaitSeconds = 3,
 }: AbcjsRendererProps) {
   const paperRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -368,7 +379,7 @@ export default function AbcjsRenderer({
     try {
       const parsed = abcjs.renderAbc("*", abc, { responsive: 'resize' });
       const vo = parsed?.[0];
-      if (!vo || !(vo as any).lines?.length) return;
+      if (!vo) { console.warn('[playSingleAbc] renderAbc returned nothing'); return; }
 
       const synth = new abcjs.synth.CreateSynth();
       synthRef.current = synth;
@@ -391,7 +402,7 @@ export default function AbcjsRenderer({
     } catch { /* ignore */ }
   }, []);
 
-  const handleSegmentPlay = useCallback(async () => {
+  const handleExamPlay = useCallback(async () => {
     if (isPlaying) {
       cancelRef.current = true;
       if (synthRef.current) try { synthRef.current.stop(); } catch { /* ignore */ }
@@ -411,13 +422,36 @@ export default function AbcjsRenderer({
 
       const { top, actualBeatDuration, multiplier } = getTimingInfo();
       const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
-      // 1박(beat) 시간: actualBeatDuration 초
-      // 1마디 시간: top * actualBeatDuration 초
       const measureDurationSec = top * actualBeatDuration;
 
-      // 1) 스케일 재생 (옵션)
-      if (prependBasePitch && !cancelRef.current) {
-        const { header } = parseAbcParts(abcString);
+      const cancelled = () => cancelRef.current;
+      const rest = () => sleep(examWaitSeconds * 1000);
+
+      const playMetro = async () => {
+        for (let j = 0; j < top; j++) {
+          createMetronomeClick(audioCtx, audioCtx.currentTime + j * actualBeatDuration, j === 0, metronomeFreq);
+        }
+        await sleep(measureDurationSec * 1000);
+      };
+
+      const { header, isGrand, treble, bass } = parseAbcParts(abcString);
+      const N = treble.length;
+
+      const playRange = async (from: number, to: number) => {
+        const end = Math.min(to, N);
+        const count = end - from;
+        if (count <= 0) return;
+        const segAbc = rebuildSegmentAbc(header, isGrand, treble.slice(from, end), isGrand ? bass.slice(from, end) : []);
+        await playSingleAbc(audioCtx, segAbc, count * measureDurationSec);
+      };
+
+      // ── 1) 스케일 ──
+      if (prependBasePitch && !cancelled()) {
+        const cleanHeader = header
+          .split('\n')
+          .filter(l => l.trim() !== '' && !/^%%staves/.test(l) && !/^%%barsperstaff/.test(l))
+          .join('\n');
+
         const ascending = SCALE_NOTES[keySignature] || SCALE_NOTES['C'];
         const descending = [...ascending].slice(0, -1).reverse();
         const allNotes = [...ascending, ...descending, 'z'];
@@ -431,61 +465,78 @@ export default function AbcjsRenderer({
           barPos += multiplier;
           if (barPos >= sixteenthsPerBar) { scaleBody += '| '; barPos = 0; }
         }
-        if (barPos > 0) scaleBody += '| ';
-        const cleanHeader = header.replace(/^%%staves.*$/gm, '').replace(/^%%barsperstaff.*$/gm, '');
-        const scaleAbc = cleanHeader + '\n' + scaleBody + '|]';
-        // 스케일 16음 × 1음당 걸리는 시간
-        const scaleNoteDur = scaleBeatDuration; // 1박 단위 음표
-        const scaleDurationSec = 16 * scaleNoteDur;
-        await playSingleAbc(audioCtx, scaleAbc, scaleDurationSec);
-        if (cancelRef.current) { setIsPlaying(false); return; }
+        const trimmedBody = scaleBody.trimEnd().replace(/\|$/, '').trimEnd();
+        const scaleAbc = cleanHeader + '\n' + trimmedBody + ' |]';
+        await playSingleAbc(audioCtx, scaleAbc, 16 * scaleBeatDuration);
+        if (cancelled()) { setIsPlaying(false); return; }
       }
 
-      // 2) 본 악보를 마디 단위로 분할
-      const { header, isGrand, treble, bass } = parseAbcParts(abcString);
-      const totalMeasures = treble.length;
+      // ── 2) 메트로놈 → 전체 → 휴식 ──
+      if (!cancelled()) { await playMetro(); }
+      if (!cancelled()) { await playRange(0, N); }
+      if (!cancelled()) { await rest(); }
 
-      for (let start = 0; start < totalMeasures; start += segmentMeasures) {
-        if (cancelRef.current) break;
+      // ── 3) 2마디 단위 반복 패턴 ──
+      // 시퀀스:
+      //   (메트로놈 → pair → 휴식) × 2
+      //   다음 pair가 있으면: 메트로놈 → 4마디(현재pair+다음pair) → 휴식
+      for (let s = 0; s < N && !cancelled(); s += 2) {
+        const pairEnd = Math.min(s + 2, N);
 
-        // 메트로놈 1마디 클릭
-        if (prependMetronome || start > 0) {
-          for (let j = 0; j < top; j++) {
-            createMetronomeClick(audioCtx, audioCtx.currentTime + j * actualBeatDuration, j === 0, metronomeFreq);
-          }
-          await sleep(measureDurationSec * 1000);
-          if (cancelRef.current) break;
+        // (메트로놈 → m[s..pairEnd) → 휴식) × 2
+        for (let rep = 0; rep < 2 && !cancelled(); rep++) {
+          await playMetro();
+          if (cancelled()) break;
+          await playRange(s, pairEnd);
+          if (cancelled()) break;
+          await rest();
         }
 
-        // 세그먼트 ABC 빌드 & 재생
-        const end = Math.min(start + segmentMeasures, totalMeasures);
-        const actualSegCount = end - start;
-        const segDurationSec = actualSegCount * measureDurationSec;
-        const segAbc = rebuildSegmentAbc(
-          header, isGrand,
-          treble.slice(start, end),
-          isGrand ? bass.slice(start, end) : []
-        );
-        await playSingleAbc(audioCtx, segAbc, segDurationSec);
-        if (cancelRef.current) break;
-
-        // 마지막 세그먼트가 아닌 경우 대기
-        if (end < totalMeasures) {
-          await sleep(segmentWaitSeconds * 1000);
+        // 다음 pair가 있으면 4마디 누적 블록
+        if (s + 2 < N && !cancelled()) {
+          const cumEnd = Math.min(s + 4, N);
+          await playMetro();
+          if (!cancelled()) await playRange(s, cumEnd);
+          if (!cancelled()) await rest();
         }
       }
+
+      // ── 4) 메트로놈 → 전체 (마지막) ──
+      if (!cancelled()) { await playMetro(); }
+      if (!cancelled()) { await playRange(0, N); }
+
     } catch (err) {
-      console.error('Segment playback error:', err);
+      console.error('Exam playback error:', err);
     }
 
     setIsPlaying(false);
-  }, [isPlaying, abcString, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo,
-      playSingleAbc, keySignature, timeSignature, scaleTempo, metronomeFreq, segmentMeasures, segmentWaitSeconds]);
+  }, [isPlaying, abcString, prependBasePitch, getTimingInfo, getScaleTimingInfo,
+      playSingleAbc, keySignature, timeSignature, scaleTempo, metronomeFreq, examWaitSeconds]);
 
   const onPlayClick = useCallback(() => {
-    if (segmentPlay) return handleSegmentPlay();
+    if (examMode) return handleExamPlay();
     return handlePlay();
-  }, [segmentPlay, handleSegmentPlay, handlePlay]);
+  }, [examMode, handleExamPlay, handlePlay]);
+
+  // ── 개별 ABC → AudioBuffer 오프라인 렌더링 ──
+  const renderAbcOffline = useCallback(async (
+    abc: string, durationSec: number, sampleRate: number
+  ): Promise<AudioBuffer> => {
+    const frames = Math.max(1, Math.floor(sampleRate * (durationSec + 0.5)));
+    const offCtx = new OfflineAudioContext(2, frames, sampleRate);
+    (offCtx as any).resume = () => Promise.resolve();
+    (offCtx as any).suspend = () => Promise.resolve();
+
+    const parsed = abcjs.renderAbc("*", abc, { responsive: 'resize' });
+    const vo = parsed?.[0];
+    if (!vo) throw new Error('renderAbc failed');
+
+    const synth = new abcjs.synth.CreateSynth();
+    await synth.init({ audioContext: offCtx as any, visualObj: vo });
+    await synth.prime();
+    synth.start();
+    return await offCtx.startRendering();
+  }, []);
 
   const handleDownloadAudio = useCallback(async (title: string) => {
     setIsExporting(true);
@@ -499,20 +550,17 @@ export default function AbcjsRenderer({
 
       if (!visualObj || !(visualObj as any).lines?.length) throw new Error('Could not render ABC for export');
 
-      // 렌더링 시간 추정
       let totalDuration = (visualObj as any).getTotalTime ? (visualObj as any).getTotalTime() : 0;
       if (!totalDuration || isNaN(totalDuration)) {
         const barCount = (combinedAbc.match(/\|/g) || []).length + 1;
-        // 스케일과 본 악보 마디 수를 나눠서 계산해야 하지만 대략적으로 합산
         totalDuration = (prependBasePitch ? 16 * scaleBeatDuration : 0) + (barCount * top * actualBeatDuration);
       }
-      totalDuration += 2; // 여유분
+      totalDuration += 2;
 
       const numFrames = Math.max(1, Math.floor(sampleRate * totalDuration));
       if (isNaN(numFrames)) throw new Error('Invalid audio duration calculated');
 
       const offlineCtx = new OfflineAudioContext(2, numFrames, sampleRate);
-      
       (offlineCtx as any).resume = () => Promise.resolve();
       (offlineCtx as any).suspend = () => Promise.resolve();
 
@@ -523,29 +571,14 @@ export default function AbcjsRenderer({
       if (prependMetronome) {
         const metronomeStartTime = prependBasePitch ? 16 * scaleBeatDuration : 0;
         for (let i = 0; i < top; i++) {
-          createMetronomeClick(
-            offlineCtx,
-            metronomeStartTime + i * actualBeatDuration,
-            i === 0,
-            metronomeFreq
-          );
+          createMetronomeClick(offlineCtx, metronomeStartTime + i * actualBeatDuration, i === 0, metronomeFreq);
         }
       }
 
       synth.start();
 
       const renderedBuffer = await offlineCtx.startRendering();
-      const wavBlob = encodeWav(renderedBuffer);
-
-      const url = URL.createObjectURL(wavBlob);
-      const a = document.createElement('a');
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.href = url;
-      a.download = `${title || 'score'}_${timestamp}.wav`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      downloadWav(renderedBuffer, title);
     } catch (err) {
       console.error('Export error:', err);
       alert('음원 내보내기 중 오류가 발생했습니다.');
@@ -554,11 +587,167 @@ export default function AbcjsRenderer({
     }
   }, [buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, metronomeFreq]);
 
+  // ── 시험용 전체 시퀀스 음원 저장 ──
+  const handleExamDownload = useCallback(async (title: string) => {
+    setIsExporting(true);
+    try {
+      const sampleRate = 44100;
+      const { top, actualBeatDuration, multiplier } = getTimingInfo();
+      const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
+      const measureDur = top * actualBeatDuration;
+      const metroDur = measureDur;
+      const restDur = examWaitSeconds;
+
+      const { header, isGrand, treble, bass } = parseAbcParts(abcString);
+      const N = treble.length;
+
+      const buildRange = (from: number, to: number) => {
+        const end = Math.min(to, N);
+        return rebuildSegmentAbc(header, isGrand, treble.slice(from, end), isGrand ? bass.slice(from, end) : []);
+      };
+
+      // ── 1단계: 시퀀스 전체 타임라인 계산 ──
+      type Step =
+        | { kind: 'scale'; dur: number }
+        | { kind: 'metro'; dur: number }
+        | { kind: 'range'; from: number; to: number; dur: number }
+        | { kind: 'rest'; dur: number };
+
+      const steps: Step[] = [];
+
+      // 스케일
+      if (prependBasePitch) {
+        const scaleDur = 16 * scaleBeatDuration;
+        steps.push({ kind: 'scale', dur: scaleDur });
+      }
+
+      // 메트로놈 → 전체 → 휴식
+      steps.push({ kind: 'metro', dur: metroDur });
+      steps.push({ kind: 'range', from: 0, to: N, dur: N * measureDur });
+      steps.push({ kind: 'rest', dur: restDur });
+
+      // 2마디 단위 패턴
+      for (let s = 0; s < N; s += 2) {
+        const pairEnd = Math.min(s + 2, N);
+        const pairCount = pairEnd - s;
+        const pairDur = pairCount * measureDur;
+
+        for (let rep = 0; rep < 2; rep++) {
+          steps.push({ kind: 'metro', dur: metroDur });
+          steps.push({ kind: 'range', from: s, to: pairEnd, dur: pairDur });
+          steps.push({ kind: 'rest', dur: restDur });
+        }
+
+        if (s + 2 < N) {
+          const cumEnd = Math.min(s + 4, N);
+          const cumCount = cumEnd - s;
+          steps.push({ kind: 'metro', dur: metroDur });
+          steps.push({ kind: 'range', from: s, to: cumEnd, dur: cumCount * measureDur });
+          steps.push({ kind: 'rest', dur: restDur });
+        }
+      }
+
+      // 메트로놈 → 전체 (마지막)
+      steps.push({ kind: 'metro', dur: metroDur });
+      steps.push({ kind: 'range', from: 0, to: N, dur: N * measureDur });
+
+      // ── 2단계: 각 ABC 세그먼트를 오프라인 렌더링 ──
+      // 동일 범위는 캐시하여 재사용
+      const bufferCache = new Map<string, AudioBuffer>();
+      const getBuffer = async (abc: string, dur: number): Promise<AudioBuffer> => {
+        const key = abc;
+        if (bufferCache.has(key)) return bufferCache.get(key)!;
+        const buf = await renderAbcOffline(abc, dur, sampleRate);
+        bufferCache.set(key, buf);
+        return buf;
+      };
+
+      // 스케일 ABC 빌드
+      let scaleAbc = '';
+      if (prependBasePitch) {
+        const cleanHdr = header
+          .split('\n')
+          .filter(l => l.trim() !== '' && !/^%%staves/.test(l) && !/^%%barsperstaff/.test(l))
+          .join('\n');
+        const ascending = SCALE_NOTES[keySignature] || SCALE_NOTES['C'];
+        const descending = [...ascending].slice(0, -1).reverse();
+        const allNotes = [...ascending, ...descending, 'z'];
+        const [topStr, bottomStr] = timeSignature.split('/');
+        const bottom = parseInt(bottomStr, 10) || 4;
+        const sixteenthsPerBar = parseInt(topStr, 10) * (16 / bottom);
+        let barPos = 0;
+        let body = `[Q:${scaleTempo}] `;
+        for (const n of allNotes) {
+          body += `${n}${multiplier} `;
+          barPos += multiplier;
+          if (barPos >= sixteenthsPerBar) { body += '| '; barPos = 0; }
+        }
+        const trimmed = body.trimEnd().replace(/\|$/, '').trimEnd();
+        scaleAbc = cleanHdr + '\n' + trimmed + ' |]';
+      }
+
+      // 타임라인 구성: offset 계산 + 버퍼 준비
+      type Scheduled = { offset: number; buffer?: AudioBuffer; metro?: true };
+      const scheduled: Scheduled[] = [];
+      let cursor = 0;
+
+      for (const step of steps) {
+        if (step.kind === 'scale') {
+          const buf = await getBuffer(scaleAbc, step.dur);
+          scheduled.push({ offset: cursor, buffer: buf });
+          cursor += step.dur;
+        } else if (step.kind === 'metro') {
+          scheduled.push({ offset: cursor, metro: true });
+          cursor += step.dur;
+        } else if (step.kind === 'range') {
+          const abc = buildRange(step.from, step.to);
+          const buf = await getBuffer(abc, step.dur);
+          scheduled.push({ offset: cursor, buffer: buf });
+          cursor += step.dur;
+        } else {
+          cursor += step.dur;
+        }
+      }
+
+      // ── 3단계: 최종 OfflineAudioContext에 모두 스케줄링 ──
+      const totalDuration = cursor + 1;
+      const totalFrames = Math.max(1, Math.floor(sampleRate * totalDuration));
+      const finalCtx = new OfflineAudioContext(2, totalFrames, sampleRate);
+
+      for (const item of scheduled) {
+        if (item.buffer) {
+          const src = finalCtx.createBufferSource();
+          src.buffer = item.buffer;
+          src.connect(finalCtx.destination);
+          src.start(item.offset);
+        }
+        if (item.metro) {
+          for (let j = 0; j < top; j++) {
+            createMetronomeClick(finalCtx, item.offset + j * actualBeatDuration, j === 0, metronomeFreq);
+          }
+        }
+      }
+
+      const finalBuffer = await finalCtx.startRendering();
+      downloadWav(finalBuffer, title);
+    } catch (err) {
+      console.error('Exam export error:', err);
+      alert('시험용 음원 내보내기 중 오류가 발생했습니다.');
+    } finally {
+      setIsExporting(false);
+    }
+  }, [abcString, prependBasePitch, getTimingInfo, getScaleTimingInfo, renderAbcOffline,
+      keySignature, timeSignature, scaleTempo, metronomeFreq, examWaitSeconds]);
+
   useEffect(() => {
-    const handler = (e: any) => handleDownloadAudio(e.detail?.title);
+    const handler = (e: any) => {
+      const t = e.detail?.title;
+      if (examMode) handleExamDownload(t);
+      else handleDownloadAudio(t);
+    };
     window.addEventListener('abcjs-download-audio', handler);
     return () => window.removeEventListener('abcjs-download-audio', handler);
-  }, [handleDownloadAudio]);
+  }, [examMode, handleDownloadAudio, handleExamDownload]);
 
   return (
     <div className="w-full flex flex-col gap-4">
