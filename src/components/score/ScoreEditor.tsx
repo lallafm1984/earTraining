@@ -304,8 +304,23 @@ export default function ScoreEditor() {
             </div>
             <div>
               <label className="block text-xs text-slate-500 mb-1">BPM</label>
-              <input type="number" className="w-full border rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400"
-                value={state.tempo} onChange={e => setState(p => ({ ...p, tempo: parseInt(e.target.value) || 120 }))} min={40} max={240} />
+              <input type="text" className="w-full border rounded-lg px-2 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-400"
+                value={state.tempo || ''} 
+                onChange={e => {
+                  const val = e.target.value;
+                  if (val === '') {
+                    setState(p => ({ ...p, tempo: 0 }));
+                  } else {
+                    const n = parseInt(val);
+                    if (!isNaN(n)) setState(p => ({ ...p, tempo: n }));
+                  }
+                }}
+                onBlur={e => {
+                  const n = parseInt(e.target.value);
+                  if (isNaN(n) || n < 40) setState(p => ({ ...p, tempo: 40 }));
+                  else if (n > 240) setState(p => ({ ...p, tempo: 240 }));
+                }}
+              />
             </div>
             <div className="flex items-end pb-1">
               <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -333,9 +348,19 @@ export default function ScoreEditor() {
               {prependBasePitch && (
                 <div className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1">
                   <span className="text-xs text-indigo-500 font-medium">BPM</span>
-                  <input type="number" value={scaleTempo} onChange={e => setScaleTempo(Number(e.target.value))}
+                  <input type="text" value={scaleTempo || ''} 
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (val === '') setScaleTempo(0);
+                      else { const n = parseInt(val); if (!isNaN(n)) setScaleTempo(n); }
+                    }}
+                    onBlur={e => {
+                      const n = parseInt(e.target.value);
+                      if (isNaN(n) || n < 40) setScaleTempo(40);
+                      else if (n > 300) setScaleTempo(300);
+                    }}
                     className="w-16 text-sm text-indigo-700 font-semibold bg-transparent outline-none text-right"
-                    min={40} max={300} />
+                  />
                 </div>
               )}
             </div>
@@ -350,9 +375,19 @@ export default function ScoreEditor() {
               {prependMetronome && (
                 <div className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-lg px-2.5 py-1">
                   <span className="text-xs text-indigo-500 font-medium">Hz</span>
-                  <input type="number" value={metronomeFreq} onChange={e => setMetronomeFreq(Number(e.target.value) || 1000)}
+                  <input type="text" value={metronomeFreq || ''} 
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (val === '') setMetronomeFreq(0);
+                      else { const n = parseInt(val); if (!isNaN(n)) setMetronomeFreq(n); }
+                    }}
+                    onBlur={e => {
+                      const n = parseInt(e.target.value);
+                      if (isNaN(n) || n < 200) setMetronomeFreq(200);
+                      else if (n > 4000) setMetronomeFreq(4000);
+                    }}
                     className="w-16 text-sm text-indigo-700 font-semibold bg-transparent outline-none text-right"
-                    min={200} max={4000} />
+                  />
                 </div>
               )}
             </div>
@@ -368,9 +403,22 @@ export default function ScoreEditor() {
               {examMode && (
                 <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1">
                   <span className="text-xs text-amber-500 font-medium">대기(초)</span>
-                  <input type="number" value={examWaitSeconds} onChange={e => setExamWaitSeconds(Math.max(0, Number(e.target.value) || 0))}
+                  <input type="text" value={examWaitSeconds} 
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (val === '') setExamWaitSeconds(0);
+                      else {
+                        const n = parseInt(val);
+                        if (!isNaN(n)) setExamWaitSeconds(n);
+                      }
+                    }}
+                    onBlur={e => {
+                      const n = parseInt(e.target.value);
+                      if (isNaN(n) || n < 0) setExamWaitSeconds(0);
+                      else if (n > 30) setExamWaitSeconds(30);
+                    }}
                     className="w-10 text-sm text-amber-700 font-semibold bg-transparent outline-none text-right"
-                    min={0} max={30} />
+                  />
                 </div>
               )}
             </div>
