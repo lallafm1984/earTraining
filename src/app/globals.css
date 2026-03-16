@@ -36,6 +36,9 @@ body {
   color: var(--foreground);
   font-family: 'Pretendard', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* 모바일 텍스트 크기 자동 조정 방지 */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 /* Pretendard 폰트 */
@@ -44,4 +47,90 @@ body {
   src: url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable.css');
 }
 
-/* 악보 음표 선택 하이라이트 — data-score-sel 속성 + inline style.fill 방식으로 관리 */
+/* ============================================
+   모바일 터치 최적화
+   ============================================ */
+
+/* 모바일: 탭 하이라이트 전역 제거 */
+a, button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 모바일 스크롤 관성 (iOS) */
+.overflow-y-auto,
+main {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 터치 타겟 최소 크기 보장 */
+@media (max-width: 767px) {
+  button, a {
+    min-height: 40px;
+    min-width: 40px;
+  }
+}
+
+/* ============================================
+   스케일 트랜지션 유틸리티
+   ============================================ */
+
+.active\:scale-98:active {
+  transform: scale(0.98);
+}
+
+.active\:scale-95:active {
+  transform: scale(0.95);
+}
+
+/* ============================================
+   카드 hover/active 효과
+   ============================================ */
+
+@media (max-width: 767px) {
+  .mobile-card-tap {
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }
+  .mobile-card-tap:active {
+    transform: scale(0.975);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+}
+
+/* ============================================
+   바텀시트 애니메이션
+   ============================================ */
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0.8;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* ============================================
+   악보 제작 — 모바일 최적화
+   ============================================ */
+
+/* 악보 SVG 컨테이너 모바일 최적화 */
+@media (max-width: 767px) {
+  .abcjs-container svg {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+/* 팔레트 버튼 터치 크기 보장 */
+@media (max-width: 767px) {
+  .score-palette-btn {
+    min-height: 36px;
+    min-width: 36px;
+  }
+}
+
+/* ============================================
+   악보 음표 선택 하이라이트 — data-score-sel 속성 + inline style.fill 방식으로 관리
+   ============================================ */

@@ -2,10 +2,13 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { FileMusic } from 'lucide-react'
+import { LayoutDashboard, BookOpen, CalendarDays, FileMusic } from 'lucide-react'
 
 const navItems = [
-  { href: '/score-creator', label: '악보제작', icon: FileMusic },
+  { href: '/dashboard',     label: '홈',       icon: LayoutDashboard },
+  { href: '/questions',     label: '문제 은행', icon: BookOpen },
+  { href: '/sessions',      label: '세션',      icon: CalendarDays },
+  { href: '/score-creator', label: '악보 제작', icon: FileMusic },
 ]
 
 export default function MobileNav() {
@@ -18,6 +21,7 @@ export default function MobileNav() {
         background: 'var(--surface)',
         borderTop: '1px solid var(--border)',
         paddingBottom: 'env(safe-area-inset-bottom)',
+        boxShadow: '0 -2px 12px rgba(0,0,0,0.06)',
       }}
     >
       {navItems.map((item) => {
@@ -31,21 +35,36 @@ export default function MobileNav() {
           <Link
             key={item.href}
             href={item.href}
-            className="flex-1 flex flex-col items-center justify-center py-2 gap-0.5 transition-colors"
-            style={{ color: isActive ? 'var(--primary)' : 'var(--muted)', minHeight: 56 }}
+            className="flex-1 flex flex-col items-center justify-center gap-1 transition-all active:scale-95"
+            style={{
+              color: isActive ? 'var(--primary)' : 'var(--muted)',
+              minHeight: 60,
+              paddingTop: 10,
+              paddingBottom: 6,
+              WebkitTapHighlightColor: 'transparent',
+            }}
           >
-            <Icon size={22} />
-            <span className="text-xs font-medium" style={{ fontSize: 10 }}>{item.label}</span>
-            {isActive && (
-              <span
-                className="absolute bottom-0 rounded-full"
-                style={{
-                  width: 4, height: 4,
-                  background: 'var(--primary)',
-                  marginBottom: 'calc(env(safe-area-inset-bottom) + 2px)',
-                }}
-              />
-            )}
+            {/* 활성 탭 배경 필 */}
+            <div
+              className="flex items-center justify-center rounded-2xl transition-all"
+              style={{
+                width: 44,
+                height: 28,
+                background: isActive ? 'var(--primary)18' : 'transparent',
+              }}
+            >
+              <Icon size={20} strokeWidth={isActive ? 2.5 : 1.8} />
+            </div>
+            <span
+              className="font-medium transition-all"
+              style={{
+                fontSize: 10,
+                fontWeight: isActive ? 700 : 500,
+                color: isActive ? 'var(--primary)' : 'var(--muted)',
+              }}
+            >
+              {item.label}
+            </span>
           </Link>
         )
       })}

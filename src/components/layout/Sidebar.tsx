@@ -4,17 +4,19 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { logout } from '@/actions/auth'
 import {
+  LayoutDashboard,
+  BookOpen,
+  CalendarDays,
   FileMusic,
   LogOut,
   GraduationCap,
 } from 'lucide-react'
 
 const navItems = [
-  {
-    href: '/score-creator',
-    label: '악보 제작',
-    icon: FileMusic,
-  },
+  { href: '/dashboard',     label: '대시보드',  icon: LayoutDashboard },
+  { href: '/questions',     label: '문제 은행', icon: BookOpen },
+  { href: '/sessions',      label: '수업 세션', icon: CalendarDays },
+  { href: '/score-creator', label: '악보 제작', icon: FileMusic },
 ]
 
 export default function Sidebar() {
