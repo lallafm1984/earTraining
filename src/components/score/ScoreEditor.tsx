@@ -3,13 +3,28 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   ScoreState, ScoreNote, NoteDuration, Accidental, PitchName, TupletType,
-  generateAbc, getTupletNoteDuration,
+  generateAbc, getMeasureCount, getTupletNoteDuration, durationToSixteenths, getSixteenthsPerBar,
+  sixteenthsToDuration, getValidTupletTypesForDuration,
 } from '@/lib/scoreUtils';
+
+/** 남은 16분음표 수를 표준 쉼표 배열로 채운다 (greedy) */
+function fillWithRests(sixteenths: number): NoteDuration[] {
+  if (sixteenths <= 0) return [];
+  const OPTIONS: [NoteDuration, number][] = [
+    ['1', 16], ['2.', 12], ['2', 8], ['4.', 6], ['4', 4], ['8.', 3], ['8', 2], ['16', 1],
+  ];
+  const result: NoteDuration[] = [];
+  let rem = sixteenths;
+  for (const [dur, s] of OPTIONS) {
+    while (rem >= s) { result.push(dur); rem -= s; }
+  }
+  return result;
+}
 import AbcjsRenderer from './AbcjsRenderer';
 import {
   Download, Trash2, Undo, FileAudio, Save, FolderOpen, X,
   Keyboard, Wand2, ChevronDown, ChevronUp, Music2, Settings2,
-  RefreshCw,
+  RefreshCw, Plus,
 } from 'lucide-react';
 import { generateScore, Difficulty } from '@/lib/scoreGenerator';
 
@@ -74,15 +89,13 @@ function getSavedScores(): SavedScore[] {
 }
 function persistScores(s: SavedScore[]) { localStorage.setItem('ear-training-scores', JSON.stringify(s)); }
 
+// 점 없는 기본 음표만 팔레트에 표시 — 점(·) 토글 버튼으로 점음표를 선택
 const DURATIONS: { value: NoteDuration; label: string }[] = [
   { value: '1',  label: '온' },
   { value: '2',  label: '2분' },
   { value: '4',  label: '4분' },
   { value: '8',  label: '8분' },
   { value: '16', label: '16분' },
-  { value: '2.', label: '점2' },
-  { value: '4.', label: '점4' },
-  { value: '8.', label: '점8' },
 ];
 const ACCIDENTALS: { value: Accidental; label: string }[] = [
   { value: '',  label: '없음' },
@@ -129,6 +142,8 @@ export default function ScoreEditor() {
   const [tuplet, setTuplet]         = useState<TupletType>('');
   const [tupletCounter, setTupletCounter] = useState(0);
   const [activeStaff, setActiveStaff] = useState<'treble' | 'bass'>('treble');
+  // 선택된 음표 (수정 모드)
+  const [selectedNote, setSelectedNote] = useState<{ id: string; staff: 'treble' | 'bass' } | null>(null);
 
   // 재생 옵션
   const [prependBasePitch, setPrependBasePitch] = useState(false);
@@ -154,7 +169,237 @@ export default function ScoreEditor() {
 
   useEffect(() => { setSavedScores(getSavedScores()); }, []);
 
+  const curNotes = state.useGrandStaff && activeStaff === 'bass' ? (state.bassNotes || []) : state.notes;
+
+  // 음표 선택: 팔레트를 수정 모드로 전환, 해당 음표의 속성 팔레트에 로드
+  const handleSelectNote = (id: string, staff: 'treble' | 'bass') => {
+    const arr = staff === 'bass' ? (state.bassNotes || []) : state.notes;
+    const note = arr.find(n => n.id === id);
+    if (!note) return;
+    setSelectedNote({ id, staff });
+    setActiveStaff(staff);
+    if (note.pitch !== 'rest') {
+      setOctave(note.octave);
+      setAccidental(note.accidental);
+    }
+    setDuration(note.duration);
+    setTie(note.tie ?? false);
+    setTuplet((note.tuplet as TupletType) || '');
+    setTupletCounter(0);
+  };
+
+  const handleDeselect = () => setSelectedNote(null);
+
+  // 선택 음표 수정: 잇단음표 적용/해제/변경
+  const handleTupletChange = (newTuplet: TupletType) => {
+    if (!selectedNote) {
+      setTuplet(newTuplet);
+      setTupletCounter(0);
+      return;
+    }
+
+    setTuplet(newTuplet);
+    setTupletCounter(0);
+
+    const isBass = selectedNote.staff === 'bass';
+
+    setState(p => {
+      const pArr = isBass ? (p.bassNotes || []) : p.notes;
+      const pIdx = pArr.findIndex(n => n.id === selectedNote.id);
+      if (pIdx < 0) return p;
+
+      const newArr = [...pArr];
+      const target = newArr[pIdx];
+
+      // 기존 잇단음표 개수 (0이면 없음)
+      const oldN = target.tuplet ? parseInt(target.tuplet, 10) : 0;
+      const newN = newTuplet  ? parseInt(newTuplet, 10) : 0;
+      const spanDur = target.tupletSpan || target.duration;
+      const isRest = target.pitch === 'rest';
+
+      if (newTuplet === '') {
+        // ── 잇단음표 해제 ──
+        // 첫 음표에서 tuplet 메타 제거
+        const { tuplet: _t, tupletSpan: _s, tupletNoteDur: _d, ...rest } = target;
+        newArr[pIdx] = { ...rest };
+        // 그룹의 나머지 (oldN-1)개 음표 제거 (쉼표가 아닌 경우)
+        if (!isRest && oldN > 1) {
+          newArr.splice(pIdx + 1, oldN - 1);
+        }
+      } else {
+        // ── 잇단음표 설정/변경 ──
+        const tupletNoteDur = getTupletNoteDuration(newTuplet, spanDur);
+        const noteDur = sixteenthsToDuration(tupletNoteDur);
+
+        newArr[pIdx] = { ...target, tuplet: newTuplet, tupletSpan: spanDur, tupletNoteDur };
+
+        if (!isRest) {
+          const makeNote = (): ScoreNote => ({
+            id: Math.random().toString(36).substr(2, 9),
+            pitch: target.pitch,
+            octave: target.octave,
+            accidental: target.accidental,
+            duration: noteDur,
+            tie: false,
+          });
+
+          if (oldN === 0) {
+            // 잇단음표 없다가 새로 적용 → (newN-1)개 삽입
+            const added = Array.from({ length: newN - 1 }, makeNote);
+            newArr.splice(pIdx + 1, 0, ...added);
+          } else if (newN > oldN) {
+            // 음표 수 증가 → 부족한 (newN-oldN)개를 그룹 끝에 삽입
+            const added = Array.from({ length: newN - oldN }, makeNote);
+            newArr.splice(pIdx + oldN, 0, ...added);
+          } else if (newN < oldN) {
+            // 음표 수 감소 → 초과 (oldN-newN)개를 그룹 끝에서 제거
+            newArr.splice(pIdx + newN, oldN - newN);
+          }
+          // newN === oldN: 개수 동일, 메타만 갱신 (위에서 이미 처리)
+        }
+      }
+
+      return { ...p, ...(isBass ? { bassNotes: newArr } : { notes: newArr }) };
+    });
+  };
+
+  // 선택 음표 수정: pitch 변경
+  const handleModifyNotePitch = (pitch: PitchName) => {
+    if (!selectedNote) return;
+    const isBass = selectedNote.staff === 'bass';
+    setState(p => {
+      const arr = isBass ? (p.bassNotes || []) : p.notes;
+      const next = arr.map(n => n.id === selectedNote.id
+        ? { ...n, pitch, octave: pitch === 'rest' ? 4 : octave, accidental: pitch === 'rest' ? '' as Accidental : accidental }
+        : n);
+      return { ...p, ...(isBass ? { bassNotes: next } : { notes: next }) };
+    });
+  };
+
+  // 선택 음표 수정: duration
+  // · 감소 → 마디 내 빈 자리만 쉼표로 채움
+  // · 증가 → 마디 경계를 초과하지 않도록 상한 설정 + 뒤 음표/쉼표 제거
+  const handleDurationChange = (d: NoteDuration) => {
+    if (!selectedNote) { setDuration(d); return; }
+    const isBass = selectedNote.staff === 'bass';
+
+    // setState 외부에서 현재 배열을 직접 읽어 effective duration 계산
+    const arr = isBass ? (state.bassNotes || []) : state.notes;
+    const idx = arr.findIndex(n => n.id === selectedNote.id);
+    if (idx < 0) { setDuration(d); return; }
+
+    const oldNote = arr[idx];
+    const oldS = durationToSixteenths(oldNote.duration);
+    const barLen = getSixteenthsPerBar(state.timeSignature);
+
+    // 이 음표가 스트림에서 몇 번째 16분음표에 있는지 계산
+    let noteStart = 0;
+    for (let i = 0; i < idx; i++) noteStart += durationToSixteenths(arr[i].duration);
+    const noteStartInMeasure = noteStart % barLen;
+    const maxSixteenths = barLen - noteStartInMeasure; // 현재 마디에서 허용되는 최대 길이
+
+    // 길이 증가 시 마디 경계를 초과하면 허용 최대값으로 클램프
+    const DUR_OPTIONS: [NoteDuration, number][] = [
+      ['1', 16], ['2.', 12], ['2', 8], ['4.', 6], ['4', 4], ['8.', 3], ['8', 2], ['16', 1],
+    ];
+    let requestedS = durationToSixteenths(d);
+    let effectiveDur: NoteDuration = d;
+    let newS = requestedS;
+    if (requestedS > maxSixteenths) {
+      const capped = DUR_OPTIONS.find(([, s]) => s <= maxSixteenths);
+      if (!capped) { setDuration(d); return; }
+      effectiveDur = capped[0];
+      newS = capped[1];
+    }
+
+    setDuration(effectiveDur);
+
+    setState(p => {
+      const pArr = isBass ? (p.bassNotes || []) : p.notes;
+      const pIdx = pArr.findIndex(n => n.id === selectedNote.id);
+      if (pIdx < 0) return p;
+
+      const newArr = [...pArr];
+      newArr[pIdx] = { ...pArr[pIdx], duration: effectiveDur };
+
+      if (newS < oldS) {
+        // ── 감소: 남은 마디 공간만큼 쉼표 채우기 ──
+        const noteEndInBar = (noteStart + newS) % barLen;
+        const spaceLeft = noteEndInBar === 0 ? 0 : barLen - noteEndInBar;
+        const fillAmount = Math.min(oldS - newS, spaceLeft);
+        if (fillAmount > 0) {
+          const rests: ScoreNote[] = fillWithRests(fillAmount).map(rd => ({
+            id: Math.random().toString(36).substr(2, 9),
+            pitch: 'rest' as PitchName, octave: 4, duration: rd,
+            accidental: '' as Accidental, tie: false,
+          }));
+          newArr.splice(pIdx + 1, 0, ...rests);
+        }
+      } else if (newS > oldS) {
+        // ── 증가: 뒤 음표/쉼표를 delta만큼 제거해 마디 내에 맞춤 ──
+        const delta = newS - oldS;
+        let remaining = delta;
+        let removeCount = 0;
+        let leftoverRests: ScoreNote[] = [];
+
+        for (let i = pIdx + 1; i < newArr.length; i++) {
+          const next = newArr[i];
+          const nextS = durationToSixteenths(next.duration);
+          if (nextS <= remaining) {
+            removeCount++;
+            remaining -= nextS;
+            if (remaining === 0) break;
+          } else {
+            // 부분적으로 겹치는 경우: 해당 음표 제거 후 남은 부분을 쉼표로 보존
+            removeCount++;
+            const leftover = nextS - remaining;
+            leftoverRests = fillWithRests(leftover).map(rd => ({
+              id: Math.random().toString(36).substr(2, 9),
+              pitch: 'rest' as PitchName, octave: 4, duration: rd,
+              accidental: '' as Accidental, tie: false,
+            }));
+            remaining = 0;
+            break;
+          }
+        }
+
+        if (removeCount > 0) {
+          newArr.splice(pIdx + 1, removeCount);
+          if (leftoverRests.length > 0) newArr.splice(pIdx + 1, 0, ...leftoverRests);
+        }
+      }
+
+      return { ...p, ...(isBass ? { bassNotes: newArr } : { notes: newArr }) };
+    });
+  };
+
+  // 선택 음표 수정: octave
+  const handleOctaveChange = (newOctave: number) => {
+    setOctave(newOctave);
+    if (!selectedNote) return;
+    const isBass = selectedNote.staff === 'bass';
+    setState(p => {
+      const arr = isBass ? (p.bassNotes || []) : p.notes;
+      return { ...p, ...(isBass ? { bassNotes: arr.map(n => n.id === selectedNote.id ? { ...n, octave: newOctave } : n) }
+                                : { notes: arr.map(n => n.id === selectedNote.id ? { ...n, octave: newOctave } : n) }) };
+    });
+  };
+
+  // 선택 음표 수정: accidental
+  const handleAccidentalChange = (acc: Accidental) => {
+    setAccidental(acc);
+    if (!selectedNote) return;
+    const isBass = selectedNote.staff === 'bass';
+    setState(p => {
+      const arr = isBass ? (p.bassNotes || []) : p.notes;
+      return { ...p, ...(isBass ? { bassNotes: arr.map(n => n.id === selectedNote.id ? { ...n, accidental: acc } : n) }
+                                : { notes: arr.map(n => n.id === selectedNote.id ? { ...n, accidental: acc } : n) }) };
+    });
+  };
+
+  // 음표 추가 (선택 없을 때 → 끝에 추가 / 선택 있을 때 → pitch 수정)
   const handleAddNote = (pitch: PitchName) => {
+    if (selectedNote) { handleModifyNotePitch(pitch); return; }
     const isRest = pitch === 'rest';
     const tupletCount = tuplet ? parseInt(tuplet, 10) : 0;
     const isFirstInTuplet = tuplet && !isRest && tupletCounter === 0;
@@ -168,15 +413,62 @@ export default function ScoreEditor() {
       tupletNoteDur: isFirstInTuplet ? getTupletNoteDuration(tuplet, duration) : undefined,
     };
     const isBass = state.useGrandStaff && activeStaff === 'bass';
-    setState(p => ({
-      ...p,
-      ...(isBass ? { bassNotes: [...(p.bassNotes || []), newNote] } : { notes: [...p.notes, newNote] }),
-    }));
+    setState(p => {
+      const arr = isBass ? (p.bassNotes || []) : p.notes;
+      return { ...p, ...(isBass ? { bassNotes: [...arr, newNote] } : { notes: [...arr, newNote] }) };
+    });
     if (tuplet && !isRest) {
       const next = tupletCounter + 1;
       setTupletCounter(next >= tupletCount ? 0 : next);
     }
   };
+
+  // 특정 index 앞에 삽입
+  const handleInsertBefore = (index: number, staff: 'treble' | 'bass') => {
+    setSelectedNote(null);
+    setActiveStaff(staff);
+    const isBass = staff === 'bass';
+    const newNote: ScoreNote = {
+      id: Math.random().toString(36).substr(2, 9),
+      pitch: 'C', octave, accidental, duration, tie: false,
+    };
+    setState(p => {
+      const arr = isBass ? (p.bassNotes || []) : p.notes;
+      const next = [...arr.slice(0, index), newNote, ...arr.slice(index)];
+      return { ...p, ...(isBass ? { bassNotes: next } : { notes: next }) };
+    });
+    // 삽입된 음표 바로 선택
+    setSelectedNote({ id: newNote.id, staff });
+    setOctave(octave); setAccidental(accidental); setDuration(duration);
+  };
+
+  const handleDeleteNote = (id: string, staff: 'treble' | 'bass') => {
+    const isBass = staff === 'bass';
+    setState(p => {
+      const arr = isBass ? (p.bassNotes || []) : p.notes;
+      return { ...p, ...(isBass ? { bassNotes: arr.filter(n => n.id !== id) }
+                                : { notes: arr.filter(n => n.id !== id) }) };
+    });
+    if (selectedNote?.id === id) setSelectedNote(null);
+  };
+
+  // 악보 SVG 음표 클릭 → 수정 모드로 전환
+  const handleAbcNoteClick = useCallback((noteIndex: number, voice: 'treble' | 'bass') => {
+    const arr = voice === 'bass' ? (state.bassNotes || []) : state.notes;
+    if (noteIndex < arr.length) {
+      handleSelectNote(arr[noteIndex].id, voice);
+      setPaletteOpen(true);
+    }
+  }, [state.notes, state.bassNotes]);  // eslint-disable-line
+
+  // AbcjsRenderer에 넘길 선택 정보 (index + voice)
+  const selectedNoteAbcInfo = (() => {
+    if (!selectedNote) return null;
+    const arr = selectedNote.staff === 'bass' ? (state.bassNotes || []) : state.notes;
+    const index = arr.findIndex(n => n.id === selectedNote.id);
+    if (index < 0) return null;
+    return { index, voice: selectedNote.staff };
+  })();
 
   const handleUndo = () => {
     const isBass = state.useGrandStaff && activeStaff === 'bass';
@@ -224,18 +516,57 @@ export default function ScoreEditor() {
     setTimeout(() => { if (previewScoreRef.current) svgToPng(previewScoreRef.current, saved.title); }, 500);
   }, []);
 
-  // 단축키
+  /** 선택된 음표 바로 다음 위치에 새 음표 삽입 */
+  const handleInsertAfterSelected = useCallback((pitch: PitchName) => {
+    if (!selectedNote) return;
+    const isBass = selectedNote.staff === 'bass';
+    const isRest = pitch === 'rest';
+    const newNote: ScoreNote = {
+      id: Math.random().toString(36).substr(2, 9),
+      pitch,
+      octave: isRest ? 4 : octave,
+      accidental: isRest ? '' as Accidental : accidental,
+      duration,
+      tie: isRest ? false : tie,
+    };
+    setState(p => {
+      const arr = isBass ? (p.bassNotes || []) : p.notes;
+      const idx = arr.findIndex(n => n.id === selectedNote.id);
+      if (idx < 0) return p;
+      const newArr = [...arr];
+      newArr.splice(idx + 1, 0, newNote);
+      return { ...p, ...(isBass ? { bassNotes: newArr } : { notes: newArr }) };
+    });
+    // 새로 삽입된 음표를 선택 상태로 전환
+    setSelectedNote({ id: newNote.id, staff: selectedNote.staff });
+  }, [selectedNote, octave, accidental, duration, tie]);
+
+  // 단축키 — 수정 모드: 선택 음표 다음에 삽입 / 일반 모드: 끝에 추가
   const handleAddNoteRef = useRef(handleAddNote);
   handleAddNoteRef.current = handleAddNote;
+  const handleInsertAfterRef = useRef(handleInsertAfterSelected);
+  handleInsertAfterRef.current = handleInsertAfterSelected;
+  const selectedNoteRef = useRef(selectedNote);
+  selectedNoteRef.current = selectedNote;
   useEffect(() => {
     const MAP: Record<string, PitchName> = { '1':'C','2':'D','3':'E','4':'F','5':'G','6':'A','7':'B' };
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       const p = MAP[e.key];
-      if (p) { e.preventDefault(); handleAddNoteRef.current(p); return; }
+      if (p) {
+        e.preventDefault();
+        // 수정 모드: 선택 음표 다음 위치에 삽입 / 일반 모드: 끝에 추가
+        if (selectedNoteRef.current) {
+          handleInsertAfterRef.current(p);
+        } else {
+          handleAddNoteRef.current(p);
+        }
+        return;
+      }
       if (e.key === 'ArrowUp')   { e.preventDefault(); setOctave(v => Math.min(6, v + 1)); }
       if (e.key === 'ArrowDown') { e.preventDefault(); setOctave(v => Math.max(2, v - 1)); }
+      if (e.key === 'Escape') setSelectedNote(null);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -243,8 +574,17 @@ export default function ScoreEditor() {
 
   const abcString = generateAbc(state);
   const noteCount = state.notes.length + (state.bassNotes?.length ?? 0);
-  const curNotes  = state.useGrandStaff && activeStaff === 'bass' ? (state.bassNotes || []) : state.notes;
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
+
+  const DUR_LABEL: Record<NoteDuration, string> = {
+    '1':'온','1.':'점온','2':'2분','4':'4분','8':'8분','16':'16분','2.':'점2','4.':'점4','8.':'점8',
+  };
+
+  const formatNoteLabel = (n: ScoreNote) => {
+    if (n.pitch === 'rest') return '쉼';
+    const acc = n.accidental === '#' ? '♯' : n.accidental === 'b' ? '♭' : n.accidental === 'n' ? '♮' : '';
+    return `${n.pitch}${acc}${n.octave}`;
+  };
 
   return (
     <div className="flex flex-col md:flex-row gap-4 md:gap-5 h-full p-3 md:p-5">
@@ -569,9 +909,31 @@ export default function ScoreEditor() {
                 metronomeFreq={metronomeFreq}
                 examMode={examMode}
                 examWaitSeconds={examWaitSeconds}
+                stretchLast={getMeasureCount(state) > 0 && getMeasureCount(state) % 4 === 0}
+                onNoteClick={handleAbcNoteClick}
+                selectedNote={selectedNoteAbcInfo}
               />
             )}
           </div>
+          {/* 선택된 음표 안내 */}
+          {noteCount > 0 && (
+            <div className={`px-4 py-2 rounded-b-xl text-xs flex items-center gap-2 transition-colors ${
+              selectedNote
+                ? 'bg-red-50 text-red-600 border-t border-red-100'
+                : 'bg-slate-50 text-slate-400 border-t border-slate-100'
+            }`}>
+              {selectedNote ? (
+                <>
+                  <span className="font-semibold">✏️ 수정 모드</span>
+                  <span className="hidden sm:inline">— 팔레트로 음정·길이·옥타브 수정 /</span>
+                  <span className="font-medium text-red-700">키보드 1~7 → 다음 위치에 삽입</span>
+                  <button onClick={handleDeselect} className="ml-auto shrink-0 underline hover:text-red-800">선택 해제 (Esc)</button>
+                </>
+              ) : (
+                <span>음표를 클릭 → 빨간색 선택 → 팔레트 수정 또는 키보드로 다음 위치에 추가</span>
+              )}
+            </div>
+          )}
         </Card>
 
         {/* ── 미리보기 (저장 목록에서 선택 시) ── */}
@@ -584,21 +946,39 @@ export default function ScoreEditor() {
               <AbcjsRenderer abcString={generateAbc(previewScore.state)}
                 timeSignature={previewScore.state.timeSignature}
                 tempo={previewScore.state.tempo}
-                keySignature={previewScore.state.keySignature} />
+                keySignature={previewScore.state.keySignature}
+                stretchLast={getMeasureCount(previewScore.state) > 0 && getMeasureCount(previewScore.state) % 4 === 0} />
             </div>
           </Card>
         )}
 
         {/* ── 음표 입력 팔레트 ── */}
-        <Card>
+        <Card className={selectedNote ? 'ring-2 ring-amber-300' : ''}>
           <button className="w-full flex items-center justify-between px-4 py-2.5 rounded-t-xl"
             onClick={() => setPaletteOpen(v => !v)}>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">음표 입력 팔레트</span>
-              {noteCount > 0 && (
-                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-                  {state.notes.length}개{state.useGrandStaff ? ` + 베이스 ${state.bassNotes?.length ?? 0}개` : ''}
-                </span>
+              {selectedNote ? (
+                <>
+                  <span className="text-xs font-semibold text-amber-600 uppercase tracking-wider">✏️ 수정</span>
+                  <span className="text-xs text-amber-500 bg-amber-50 px-2 py-0.5 rounded-full font-medium">
+                    {(() => {
+                      const arr = selectedNote.staff === 'bass' ? (state.bassNotes || []) : state.notes;
+                      const n = arr.find(x => x.id === selectedNote.id);
+                      return n ? formatNoteLabel(n) : '';
+                    })()} · {DUR_LABEL[duration]}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    {state.useGrandStaff ? (activeStaff === 'treble' ? '🎼 높은음자리 추가' : '🎵 낮은음자리 추가') : '음표 추가'}
+                  </span>
+                  {noteCount > 0 && (
+                    <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                      {state.notes.length}개{state.useGrandStaff ? ` + 베이스 ${state.bassNotes?.length ?? 0}개` : ''}
+                    </span>
+                  )}
+                </>
               )}
             </div>
             {paletteOpen ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
@@ -607,8 +987,8 @@ export default function ScoreEditor() {
           {paletteOpen && (
             <div className="border-t border-slate-100 p-4 flex flex-col gap-4">
 
-              {/* 큰보표: 보표 선택 */}
-              {state.useGrandStaff && (
+              {/* 큰보표: 추가 모드일 때만 보표 선택 표시 */}
+              {state.useGrandStaff && !selectedNote && (
                 <div className="flex gap-2">
                   {(['treble','bass'] as const).map(s => (
                     <button key={s} onClick={() => setActiveStaff(s)}
@@ -624,102 +1004,171 @@ export default function ScoreEditor() {
                 </div>
               )}
 
-              <div className="flex flex-wrap gap-x-4 gap-y-3 items-start">
-                {/* 음표 길이 */}
-                <div>
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">길이</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {DURATIONS.map(d => (
-                      <button key={d.value} onClick={() => setDuration(d.value)}
+              {/* 음표 길이 팔레트 - 기본 길이 + 점 토글 */}
+              {(() => {
+                const baseDur = (duration.endsWith('.') ? duration.slice(0, -1) : duration) as NoteDuration;
+                const hasDot = duration.endsWith('.');
+                const dotDisabled = baseDur === '16';
+
+                const handleBaseDurationClick = (base: NoteDuration) => {
+                  const newDur = (hasDot && base !== '16') ? `${base}.` as NoteDuration : base;
+                  handleDurationChange(newDur);
+                };
+                const handleDotToggle = () => {
+                  if (dotDisabled) return;
+                  if (hasDot) {
+                    handleDurationChange(baseDur);
+                  } else {
+                    handleDurationChange(`${baseDur}.` as NoteDuration);
+                  }
+                };
+
+                return (
+                  <div className="flex flex-wrap gap-x-4 gap-y-3 items-start">
+                    {/* 음표 길이 */}
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">길이</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {DURATIONS.map(d => (
+                          <button key={d.value} onClick={() => handleBaseDurationClick(d.value)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                              baseDur === d.value ? 'bg-indigo-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}>
+                            {d.label}
+                          </button>
+                        ))}
+                        <button
+                          onClick={handleDotToggle}
+                          disabled={dotDisabled}
+                          title={dotDisabled ? '16분음표는 점음표 불가' : '점음표 토글'}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                            hasDot ? 'bg-rose-500 text-white shadow-sm' : dotDisabled ? 'bg-slate-50 text-slate-300 cursor-not-allowed' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}>
+                          점(·)
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* 변화표 */}
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">변화표</p>
+                      <div className="flex gap-1.5">
+                        {ACCIDENTALS.map(a => (
+                          <button key={a.label} onClick={() => handleAccidentalChange(a.value)}
+                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                              accidental === a.value ? 'bg-rose-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                            }`}>
+                            {a.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* 옥타브 */}
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">옥타브</p>
+                      <div className="flex items-center gap-1.5 bg-slate-100 rounded-lg p-1">
+                        <button onClick={() => handleOctaveChange(Math.max(2, octave - 1))}
+                          className="w-7 h-7 flex items-center justify-center bg-white rounded-md shadow-sm text-slate-700 font-bold hover:bg-slate-50 text-sm">−</button>
+                        <span className="w-6 text-center text-sm font-bold text-slate-800">{octave}</span>
+                        <button onClick={() => handleOctaveChange(Math.min(6, octave + 1))}
+                          className="w-7 h-7 flex items-center justify-center bg-white rounded-md shadow-sm text-slate-700 font-bold hover:bg-slate-50 text-sm">+</button>
+                      </div>
+                    </div>
+
+                    {/* 이음표 */}
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">이음표</p>
+                      <button onClick={() => setTie(v => !v)}
                         className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                          duration === d.value ? 'bg-indigo-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          tie ? 'bg-indigo-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                         }`}>
-                        {d.label}
+                        Tie {tie ? '켜짐' : '꺼짐'}
                       </button>
-                    ))}
-                  </div>
-                </div>
+                    </div>
 
-                {/* 변화표 */}
-                <div>
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">변화표</p>
-                  <div className="flex gap-1.5">
-                    {ACCIDENTALS.map(a => (
-                      <button key={a.label} onClick={() => setAccidental(a.value)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                          accidental === a.value ? 'bg-rose-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}>
-                        {a.label}
-                      </button>
-                    ))}
+                    {/* 잇단음표 (추가/수정 모드 모두) */}
+                    <div>
+                      <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">잇단음표</p>
+                      <div className="flex gap-1.5 items-center flex-wrap">
+                        {(() => {
+                          const TUPLET_LABELS: Record<TupletType, string> = {
+                            '': '없음', '2': '2연', '3': '3연', '4': '4연',
+                            '5': '5연', '6': '6연', '7': '7연', '8': '8연',
+                          };
+                          const valid = getValidTupletTypesForDuration(duration);
+                          const withCurrent = tuplet && !valid.includes(tuplet) ? [...valid, tuplet] : valid;
+                          const options: [TupletType, string][] = [['', '없음'], ...withCurrent.map(t => [t, TUPLET_LABELS[t] || `${t}연`] as [TupletType, string])];
+                          return options.map(([v, l]) => (
+                            <button key={v} onClick={() => handleTupletChange(v)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                tuplet === v ? 'bg-amber-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                              }`}>
+                              {l}
+                            </button>
+                          ));
+                        })()}
+                        {!selectedNote && tuplet && <span className="text-xs text-amber-600 font-bold ml-1">({tupletCounter}/{tuplet})</span>}
+                      </div>
+                    </div>
                   </div>
-                </div>
-
-                {/* 옥타브 */}
-                <div>
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">옥타브</p>
-                  <div className="flex items-center gap-1.5 bg-slate-100 rounded-lg p-1">
-                    <button onClick={() => setOctave(v => Math.max(2, v - 1))}
-                      className="w-7 h-7 flex items-center justify-center bg-white rounded-md shadow-sm text-slate-700 font-bold hover:bg-slate-50 text-sm">−</button>
-                    <span className="w-6 text-center text-sm font-bold text-slate-800">{octave}</span>
-                    <button onClick={() => setOctave(v => Math.min(6, v + 1))}
-                      className="w-7 h-7 flex items-center justify-center bg-white rounded-md shadow-sm text-slate-700 font-bold hover:bg-slate-50 text-sm">+</button>
-                  </div>
-                </div>
-
-                {/* 이음표 */}
-                <div>
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">이음표</p>
-                  <button onClick={() => setTie(v => !v)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                      tie ? 'bg-indigo-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                    }`}>
-                    Tie {tie ? '켜짐' : '꺼짐'}
-                  </button>
-                </div>
-
-                {/* 잇단음표 */}
-                <div>
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">잇단음표</p>
-                  <div className="flex gap-1.5 items-center">
-                    {([['', '없음'], ['3', '3연'], ['5', '5연'], ['6', '6연'], ['7', '7연']] as [TupletType, string][]).map(([v, l]) => (
-                      <button key={v} onClick={() => { setTuplet(v); setTupletCounter(0); }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                          tuplet === v ? 'bg-amber-500 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                        }`}>
-                        {l}
-                      </button>
-                    ))}
-                    {tuplet && <span className="text-xs text-amber-600 font-bold ml-1">({tupletCounter}/{tuplet})</span>}
-                  </div>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* 음표 버튼 */}
-              <div className="flex gap-1.5 md:gap-2 items-center">
-                {PITCHES.map(p => (
-                  <button key={p} onClick={() => handleAddNote(p)}
-                    className="flex-1 h-11 md:h-12 rounded-xl bg-white border-2 border-indigo-100 shadow-sm text-base md:text-lg font-bold text-indigo-700 hover:bg-indigo-50 hover:border-indigo-300 active:scale-95 transition-all">
-                    {p}
+              <div>
+                {selectedNote && (
+                  <p className="text-[10px] font-semibold text-amber-500 mb-1.5">음이름 클릭 → 선택 음표 음정 변경</p>
+                )}
+                <div className="flex gap-1.5 md:gap-2 items-center">
+                  {PITCHES.map(p => (
+                    <button key={p} onClick={() => handleAddNote(p)}
+                      className={`flex-1 h-11 md:h-12 rounded-xl shadow-sm text-base md:text-lg font-bold active:scale-95 transition-all ${
+                        selectedNote
+                          ? 'bg-amber-50 border-2 border-amber-200 text-amber-700 hover:bg-amber-100 hover:border-amber-400'
+                          : 'bg-white border-2 border-indigo-100 text-indigo-700 hover:bg-indigo-50 hover:border-indigo-300'
+                      }`}>
+                      {p}
+                    </button>
+                  ))}
+                  <div className="w-px h-8 bg-slate-200 mx-1" />
+                  <button onClick={() => handleAddNote('rest')}
+                    className="px-4 h-12 rounded-xl bg-slate-100 text-slate-600 border border-slate-200 font-medium hover:bg-slate-200 active:scale-95 transition-all text-sm whitespace-nowrap">
+                    쉼표
                   </button>
-                ))}
-                <div className="w-px h-8 bg-slate-200 mx-1" />
-                <button onClick={() => handleAddNote('rest')}
-                  className="px-4 h-12 rounded-xl bg-slate-100 text-slate-600 border border-slate-200 font-medium hover:bg-slate-200 active:scale-95 transition-all text-sm whitespace-nowrap">
-                  쉼표
-                </button>
+                </div>
               </div>
 
               {/* 편집 버튼 + 단축키 */}
               <div className="flex items-center gap-2">
-                <button onClick={handleUndo} disabled={curNotes.length === 0}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 disabled:opacity-40 transition-all">
-                  <Undo size={14} /> 되돌리기
-                </button>
-                <button onClick={handleClear} disabled={curNotes.length === 0}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 disabled:opacity-40 transition-all">
-                  <Trash2 size={14} /> 전체 삭제
-                </button>
+                {selectedNote ? (
+                  <>
+                    <button
+                      onClick={() => {
+                        const arr = selectedNote.staff === 'bass' ? (state.bassNotes || []) : state.notes;
+                        const idx = arr.findIndex(n => n.id === selectedNote.id);
+                        if (idx >= 0) handleDeleteNote(selectedNote.id, selectedNote.staff);
+                      }}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 transition-all">
+                      <Trash2 size={14} /> 이 음표 삭제
+                    </button>
+                    <button onClick={handleDeselect}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-200 transition-all">
+                      선택 해제
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={handleUndo} disabled={curNotes.length === 0}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-white border border-slate-200 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 disabled:opacity-40 transition-all">
+                      <Undo size={14} /> 되돌리기
+                    </button>
+                    <button onClick={handleClear} disabled={curNotes.length === 0}
+                      className="flex items-center gap-1.5 px-4 py-2 bg-red-50 border border-red-200 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 disabled:opacity-40 transition-all">
+                      <Trash2 size={14} /> 전체 삭제
+                    </button>
+                  </>
+                )}
                 <div className="ml-auto flex items-center gap-2.5 text-xs text-slate-400">
                   <Keyboard size={12} />
                   <span><kbd className="px-1.5 py-0.5 bg-slate-100 border rounded font-mono text-[11px]">1</kbd>~<kbd className="px-1.5 py-0.5 bg-slate-100 border rounded font-mono text-[11px]">7</kbd> = C~B</span>

@@ -16,6 +16,9 @@ interface AbcjsRendererProps {
   metronomeFreq?: number;
   examMode?: boolean;
   examWaitSeconds?: number;
+  stretchLast?: boolean;
+  onNoteClick?: (noteIndex: number, voice: 'treble' | 'bass') => void;
+  selectedNote?: { index: number; voice: 'treble' | 'bass' } | null;
 }
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
@@ -165,6 +168,9 @@ export default function AbcjsRenderer({
   metronomeFreq = 1000,
   examMode = false,
   examWaitSeconds = 3,
+  stretchLast = true,
+  onNoteClick,
+  selectedNote,
 }: AbcjsRendererProps) {
   const paperRef = useRef<HTMLDivElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -172,7 +178,12 @@ export default function AbcjsRenderer({
   const synthRef = useRef<any>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const cancelRef = useRef(false);
+  const playEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 항상 최신 콜백 참조 유지
+  const onNoteClickRef = useRef(onNoteClick);
+  useEffect(() => { onNoteClickRef.current = onNoteClick; });
 
+  // ── ABC 렌더링 + 클릭 리스너 + 마디 균일 간격 ──
   useEffect(() => {
     if (!paperRef.current) return;
     abcjs.renderAbc(paperRef.current, abcString, {
@@ -180,8 +191,58 @@ export default function AbcjsRenderer({
       responsive: 'resize',
       scale: 1.2,
       staffwidth: 800,
+      // 마디 간격을 균일하게 고정 (우측 끝까지 늘리지 않음)
+      wrap: { minSpacing: 1.8, maxSpacing: 1.8, preferredMeasuresPerLine: 4 },
+      format: { stretchlast: stretchLast },
+      clickListener: (_abcElem: any, _tuneNumber: number, _classes: string, analysis: any, _drag: any) => {
+        if (!onNoteClickRef.current || !paperRef.current) return;
+        const el: Element | undefined = analysis?.selectableElement;
+        if (!el) return;
+        const voiceIdx: number = analysis?.voice ?? 0;
+        const voice: 'treble' | 'bass' = voiceIdx === 1 ? 'bass' : 'treble';
+        const voiceClass = voiceIdx === 1 ? 'abcjs-v1' : 'abcjs-v0';
+        const allNotes = Array.from(
+          paperRef.current!.querySelectorAll(`.${voiceClass}.abcjs-note, .${voiceClass}.abcjs-rest`)
+        );
+        const idx = allNotes.indexOf(el);
+        if (idx >= 0) onNoteClickRef.current(idx, voice);
+      },
     });
-  }, [abcString]);
+  }, [abcString]); // eslint-disable-line
+
+  // ── 선택 음표 하이라이트 ──
+  // CSS 클래스 방식이 SVG 재렌더 시 불안정하므로 직접 style.fill 조작으로 교체.
+  // data-score-sel 속성으로 하이라이트 적용 요소를 추적.
+  const selIndex = selectedNote?.index ?? -1;
+  const selVoice = selectedNote?.voice ?? '';
+
+  useEffect(() => {
+    if (!paperRef.current) return;
+
+    const setNoteFill = (el: Element, color: string) => {
+      el.querySelectorAll('path, ellipse, polygon, polyline, rect, use').forEach(child => {
+        (child as SVGElement).style.fill = color;
+      });
+    };
+
+    // 모든 음표/쉼표를 검정색으로 초기화
+    paperRef.current.querySelectorAll('.abcjs-note, .abcjs-rest').forEach(el => {
+      setNoteFill(el, '#000');
+      el.removeAttribute('data-score-sel');
+    });
+
+    if (selIndex < 0) return;
+
+    const voiceClass = selVoice === 'bass' ? 'abcjs-v1' : 'abcjs-v0';
+    const allNotes = Array.from(
+      paperRef.current.querySelectorAll(`.${voiceClass}.abcjs-note, .${voiceClass}.abcjs-rest`)
+    );
+    const targetEl = allNotes[selIndex] as SVGElement | undefined;
+    if (!targetEl) return;
+
+    targetEl.setAttribute('data-score-sel', 'true');
+    setNoteFill(targetEl, '#ef4444');
+  }, [abcString, selIndex, selVoice]);
 
   // 템포를 인자로 받는 타이밍 계산 함수
   const getTimingForBpm = useCallback((bpm: number) => {
@@ -306,6 +367,10 @@ export default function AbcjsRenderer({
 
   const handlePlay = useCallback(async () => {
     if (isPlaying) {
+      if (playEndTimeoutRef.current) {
+        clearTimeout(playEndTimeoutRef.current);
+        playEndTimeoutRef.current = null;
+      }
       if (synthRef.current) {
         try { synthRef.current.stop(); } catch { /* ignore */ }
       }
@@ -350,24 +415,30 @@ export default function AbcjsRenderer({
 
         synth.start();
 
-        const checkEnd = setInterval(() => {
-          if (typeof (synth as any).getIsRunning === 'function' ? !(synth as any).getIsRunning() : true) {
-            clearInterval(checkEnd);
-            setIsPlaying(false);
-          }
-        }, 500);
-
-        // Safety timeout
-        setTimeout(() => {
-          clearInterval(checkEnd);
+        // 재생 종료 시 버튼을 재생으로 복귀
+        let totalDuration = (visualObj as any).getTotalTime ? (visualObj as any).getTotalTime() : 0;
+        if (!totalDuration || isNaN(totalDuration)) {
+          // 큰보표에서는 | 개수가 V1+V2로 중복되어 잘못 계산되므로 parseAbcParts로 실제 마디 수 사용
+          const { treble } = parseAbcParts(abcString);
+          const measureCount = treble.length;
+          totalDuration =
+            (prependBasePitch ? 16 * scaleBeatDuration : 0) +
+            (prependMetronome ? top * actualBeatDuration : 0) +
+            measureCount * top * actualBeatDuration;
+        }
+        const endMs = (totalDuration + 0.5) * 1000;
+        playEndTimeoutRef.current = setTimeout(() => {
+          playEndTimeoutRef.current = null;
           setIsPlaying(false);
-        }, 60000); // 1 minute max
+        }, Math.min(endMs, 120000)); // 최대 2분
+      } else {
+        setIsPlaying(false);
       }
     } catch (err) {
       console.error('Playback error:', err);
       setIsPlaying(false);
     }
-  }, [isPlaying, buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, metronomeFreq]);
+  }, [isPlaying, abcString, buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, metronomeFreq]);
 
   // ── 마디연주 (segmented playback) ────────────────────────────────
   // durationSec: 예상 재생 시간(초). 이 시간만큼 기다린 후 resolve.
@@ -552,8 +623,12 @@ export default function AbcjsRenderer({
 
       let totalDuration = (visualObj as any).getTotalTime ? (visualObj as any).getTotalTime() : 0;
       if (!totalDuration || isNaN(totalDuration)) {
-        const barCount = (combinedAbc.match(/\|/g) || []).length + 1;
-        totalDuration = (prependBasePitch ? 16 * scaleBeatDuration : 0) + (barCount * top * actualBeatDuration);
+        const { treble } = parseAbcParts(abcString);
+        const measureCount = treble.length;
+        totalDuration =
+          (prependBasePitch ? 16 * scaleBeatDuration : 0) +
+          (prependMetronome ? top * actualBeatDuration : 0) +
+          measureCount * top * actualBeatDuration;
       }
       totalDuration += 2;
 
@@ -585,7 +660,7 @@ export default function AbcjsRenderer({
     } finally {
       setIsExporting(false);
     }
-  }, [buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, metronomeFreq]);
+  }, [abcString, buildCombinedAbc, prependBasePitch, prependMetronome, getTimingInfo, getScaleTimingInfo, metronomeFreq]);
 
   // ── 시험용 전체 시퀀스 음원 저장 ──
   const handleExamDownload = useCallback(async (title: string) => {

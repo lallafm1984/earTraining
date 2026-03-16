@@ -192,7 +192,7 @@ function generateCadenceMeasure(
 // 초급: 4분쉼표 @ 약박 (offset 4 or 12)
 // 중급: 연속 8분음표 쌍의 첫 번째를 8분쉼표
 // 고급: 연속 16분음표 4개의 1~2번째를 16분쉼표
-// 안전장치: 첫 마디 첫 박 금지 / 양손 동시 쉼표 금지
+// 안전장치: 첫 마디 첫 박 금지 / 양손 동시 쉼표 금지 / 연속 쉼표 금지 / 잇단음표 내부 쉼표 금지
 function applyInternalRests(
   treble: ScoreNote[],
   bass: ScoreNote[],
@@ -206,7 +206,7 @@ function applyInternalRests(
 
   type NotePos = { noteIdx: number; bar: number; offset: number; dur: number };
   const sizMap: Record<NoteDuration, number> = {
-    '1': 16, '2': 8, '2.': 12, '4': 4, '4.': 6, '8': 2, '8.': 3, '16': 1,
+    '1': 16, '1.': 24, '2': 8, '2.': 12, '4': 4, '4.': 6, '8': 2, '8.': 3, '16': 1,
   };
 
   // treble 타임라인
@@ -216,6 +216,16 @@ function applyInternalRests(
     const dur = sizMap[treble[i].duration] ?? 4;
     timeline.push({ noteIdx: i, bar: Math.floor(pos / sixteenthsPerBar), offset: pos % sixteenthsPerBar, dur });
     pos += dur;
+  }
+
+  // 잇단음표 그룹 내 인덱스 집합 (쉼표 후보에서 제외)
+  const inTuplet = new Set<number>();
+  for (let i = 0; i < treble.length; i++) {
+    const note = treble[i];
+    if (note.tuplet) {
+      const count = parseInt(note.tuplet, 10);
+      for (let k = 0; k < count; k++) inTuplet.add(i + k);
+    }
   }
 
   // bass 쉼표 위치 집합
@@ -231,25 +241,41 @@ function applyInternalRests(
     }
   }
 
+  const isRest = (idx: number) => treble[idx]?.pitch === ('rest' as PitchName);
+
   // 후보 선정
   let candidates: NotePos[] = [];
 
   if (difficulty === 'beginner') {
     // 약박(2박·4박) 위치의 4분음표만
-    candidates = timeline.filter(p =>
+    candidates = timeline.filter((p, idx) =>
       p.dur === 4 &&
       (p.offset === 4 || p.offset === 12) &&
-      treble[p.noteIdx].pitch !== ('rest' as PitchName)
+      !isRest(p.noteIdx) &&
+      !inTuplet.has(p.noteIdx) &&
+      !isRest(timeline[idx - 1]?.noteIdx ?? -1) &&
+      !isRest(timeline[idx + 1]?.noteIdx ?? -1)
     );
   } else if (difficulty === 'intermediate') {
-    // 연속 8분음표 쌍의 첫 번째 (bar 0 첫 박 제외)
-    candidates = timeline.filter((p, idx) => {
+    // 4분쉼표 후보 (약박 2·4박)
+    const quarterCandidates = timeline.filter((p, idx) =>
+      p.dur === 4 &&
+      (p.offset === 4 || p.offset === 12) &&
+      !isRest(p.noteIdx) && !inTuplet.has(p.noteIdx) &&
+      !isRest(timeline[idx - 1]?.noteIdx ?? -1) &&
+      !isRest(timeline[idx + 1]?.noteIdx ?? -1)
+    );
+    // 8분쉼표 후보 (연속 8분음표 쌍의 첫 번째)
+    const eighthCandidates = timeline.filter((p, idx) => {
       if (p.dur !== 2) return false;
       const next = timeline[idx + 1];
       if (!next || next.dur !== 2) return false;
       if (p.bar === 0 && p.offset === 0) return false;
-      return treble[p.noteIdx].pitch !== ('rest' as PitchName);
+      return !isRest(p.noteIdx) && !inTuplet.has(p.noteIdx) &&
+        !isRest(timeline[idx - 1]?.noteIdx ?? -1) && !isRest(next.noteIdx);
     });
+    // 4분쉼표 비율을 높임 (4분 3 : 8분 1)
+    candidates = [...quarterCandidates, ...quarterCandidates, ...quarterCandidates, ...eighthCandidates];
   } else {
     // 고급: 연속 16분음표 4개 묶음의 1번째 or 2번째 (bar 0 첫 박 제외)
     const firstSet: NotePos[] = [];
@@ -262,10 +288,13 @@ function applyInternalRests(
       if (!n1 || !n2 || !n3) return;
       if (n1.dur !== 1 || n2.dur !== 1 || n3.dur !== 1) return;
       if (p.bar === 0 && p.offset === 0) return;
-      if (treble[p.noteIdx].pitch !== ('rest' as PitchName)) firstSet.push(p);
-      if (treble[n1.noteIdx].pitch !== ('rest' as PitchName)) secondSet.push(n1);
+      if (!isRest(p.noteIdx) && !inTuplet.has(p.noteIdx) &&
+          !isRest(timeline[idx - 1]?.noteIdx ?? -1) && !isRest(n1.noteIdx))
+        firstSet.push(p);
+      if (!isRest(n1.noteIdx) && !inTuplet.has(n1.noteIdx) &&
+          !isRest(p.noteIdx) && !isRest(n2.noteIdx))
+        secondSet.push(n1);
     });
-    // 1번째 또는 2번째 위치에서 랜덤 혼합
     candidates = Math.random() < 0.5 ? firstSet : secondSet;
   }
 
@@ -277,7 +306,19 @@ function applyInternalRests(
 
   if (candidates.length === 0) return;
 
-  const chosen = [...candidates].sort(() => Math.random() - 0.5).slice(0, budget);
+  // 연속 쉼표 방지: 선택 시 인접한 후보 제거
+  const shuffled = [...candidates].sort(() => Math.random() - 0.5);
+  const chosen: NotePos[] = [];
+  const chosenIdx = new Set<number>();
+  for (const c of shuffled) {
+    if (chosen.length >= budget) break;
+    const prevIdx = c.noteIdx - 1;
+    const nextIdx = c.noteIdx + 1;
+    if (chosenIdx.has(prevIdx) || chosenIdx.has(nextIdx)) continue;
+    chosen.push(c);
+    chosenIdx.add(c.noteIdx);
+  }
+
   for (const c of chosen) {
     treble[c.noteIdx] = makeRest(treble[c.noteIdx].duration);
   }
