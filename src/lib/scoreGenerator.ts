@@ -100,15 +100,28 @@ function noteNumToNote(
   return { pitch, octave: baseOctave + octOff + wrap };
 }
 
-function fillRhythm(total: number, pool: number[]): number[] {
+function fillRhythm(total: number, pool: number[], lastDur?: number): number[] {
   const sorted = [...pool].sort((a, b) => b - a);
   const result: number[] = [];
   let rem = total;
   while (rem > 0) {
-    const avail = sorted.filter(d => d <= rem);
+    let avail = sorted.filter(d => d <= rem);
+    
+    // 점 4분음표(6) 연속 방지
+    const prevDur = result.length > 0 ? result[result.length - 1] : lastDur;
+    if (prevDur === 6) {
+      avail = avail.filter(d => d !== 6);
+    }
+
     if (avail.length === 0) {
-      const fallback = Object.keys(SIXTEENTHS_TO_DUR).map(Number)
+      let fallback = Object.keys(SIXTEENTHS_TO_DUR).map(Number)
         .filter(d => d <= rem).sort((a, b) => b - a);
+        
+      const prevDurFallback = result.length > 0 ? result[result.length - 1] : lastDur;
+      if (prevDurFallback === 6) {
+        fallback = fallback.filter(d => d !== 6);
+      }
+
       if (fallback.length) { result.push(fallback[0]); rem -= fallback[0]; }
       else { result.push(rem); break; }
     } else {
@@ -356,9 +369,13 @@ export function generateScore(opts: GeneratorOptions): GeneratedScore {
   let pendingResolution: PitchName | null = null;
 
   // ── 마디 생성 (cadence 마디 제외) ────────────────────────────
+  let lastTrebleDur: number | undefined;
   for (let bar = 0; bar < measures - 1; bar++) {
     const tones  = CHORD_TONES[progression[bar]];
-    const rhythm = fillRhythm(sixteenthsPerBar, pool);
+    const rhythm = fillRhythm(sixteenthsPerBar, pool, lastTrebleDur);
+    if (rhythm.length > 0) {
+      lastTrebleDur = rhythm[rhythm.length - 1];
+    }
 
     let barPos = 0;
     for (let i = 0; i < rhythm.length; i++) {
