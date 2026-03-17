@@ -825,7 +825,7 @@ export default function AbcjsRenderer({
   }, [examMode, handleDownloadAudio, handleExamDownload]);
 
   return (
-    <div className="w-full flex flex-col gap-4">
+    <div className="w-full flex flex-col gap-4 pb-4">
       <div ref={paperRef} className="w-full min-h-[200px] bg-white text-black p-4 rounded-xl border border-border shadow-sm overflow-x-auto" />
       <div className="flex items-center gap-3 bg-slate-100 p-3 rounded-xl max-w-md mx-auto w-full">
         <button

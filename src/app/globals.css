@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  /* 기획서 디자인 시스템 */
+  /* 디자인 시스템 */
   --primary: #3B5BA5;
   --primary-dark: #2d4580;
   --accent: #F5A623;
@@ -39,19 +39,15 @@ body {
   /* 모바일 텍스트 크기 자동 조정 방지 */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-}
-
-/* Pretendard 폰트 */
-@font-face {
-  font-family: 'Pretendard';
-  src: url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/variable/pretendardvariable.css');
+  /* 360px 기준 최소 너비 */
+  min-width: 360px;
 }
 
 /* ============================================
    모바일 터치 최적화
    ============================================ */
 
-/* 모바일: 탭 하이라이트 전역 제거 */
+/* 탭 하이라이트 전역 제거 */
 a, button {
   -webkit-tap-highlight-color: transparent;
 }
@@ -62,7 +58,7 @@ main {
   -webkit-overflow-scrolling: touch;
 }
 
-/* 터치 타겟 최소 크기 보장 */
+/* 터치 타겟 최소 크기 보장 (360px 기준) */
 @media (max-width: 767px) {
   button, a {
     min-height: 40px;
@@ -83,20 +79,6 @@ main {
 }
 
 /* ============================================
-   카드 hover/active 효과
-   ============================================ */
-
-@media (max-width: 767px) {
-  .mobile-card-tap {
-    transition: transform 0.12s ease, box-shadow 0.12s ease;
-  }
-  .mobile-card-tap:active {
-    transform: scale(0.975);
-    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-  }
-}
-
-/* ============================================
    바텀시트 애니메이션
    ============================================ */
 
@@ -112,7 +94,7 @@ main {
 }
 
 /* ============================================
-   악보 제작 — 모바일 최적화
+   악보 제작 — 모바일 360px 최적화
    ============================================ */
 
 /* 악보 SVG 컨테이너 모바일 최적화 */
@@ -132,5 +114,5 @@ main {
 }
 
 /* ============================================
-   악보 음표 선택 하이라이트 — data-score-sel 속성 + inline style.fill 방식으로 관리
+   악보 음표 선택 하이라이트
    ============================================ */

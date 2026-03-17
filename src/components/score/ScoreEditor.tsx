@@ -100,6 +100,18 @@ const ACCIDENTALS: { value: Accidental; label: string }[] = [
   { value: 'n', label: '♮' },
 ];
 const PITCHES: PitchName[] = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const PITCH_LABELS: Record<string, string> = {
+  C: '도', D: '레', E: '미', F: '파', G: '솔', A: '라', B: '시',
+};
+const PITCH_STYLES: Record<string, { bg: string; text: string; border: string }> = {
+  C: { bg: '#fee2e2', text: '#991b1b', border: '#fecaca' }, // Red
+  D: { bg: '#ffedd5', text: '#9a3412', border: '#fed7aa' }, // Orange
+  E: { bg: '#fef9c3', text: '#854d0e', border: '#fef08a' }, // Yellow
+  F: { bg: '#dcfce7', text: '#166534', border: '#bbf7d0' }, // Green
+  G: { bg: '#e0f2fe', text: '#075985', border: '#bae6fd' }, // Sky
+  A: { bg: '#e0e7ff', text: '#3730a3', border: '#c7d2fe' }, // Indigo
+  B: { bg: '#f3e8ff', text: '#6b21a8', border: '#e9d5ff' }, // Purple
+};
 
 const DIFF_LABELS: Record<Difficulty, string> = { beginner:'초급', intermediate:'중급', advanced:'고급' };
 const DIFF_DESC: Record<Difficulty, string> = {
@@ -219,6 +231,9 @@ export default function ScoreEditor() {
 
   // 모바일 바텀시트
   const [mobileSheet, setMobileSheet] = useState<'settings' | 'playback' | 'generate' | 'saved' | null>(null);
+
+  // 모바일 하단 팔레트 서브메뉴
+  const [mobileSubMenu, setMobileSubMenu] = useState<'duration' | 'accidental' | 'octave' | 'tie' | 'tuplet' | null>(null);
 
   const scoreRef        = useRef<HTMLDivElement>(null);
   const previewScoreRef = useRef<HTMLDivElement>(null);
@@ -453,7 +468,12 @@ export default function ScoreEditor() {
     });
     if (tuplet && !isRest) {
       const next = tupletCounter + 1;
-      setTupletCounter(next >= tupletCount ? 0 : next);
+      if (next >= tupletCount) {
+        setTupletCounter(0);
+        setTuplet('');
+      } else {
+        setTupletCounter(next);
+      }
     }
   };
 
@@ -551,6 +571,9 @@ export default function ScoreEditor() {
     if (!selectedNote) return;
     const isBass = selectedNote.staff === 'bass';
     const isRest = pitch === 'rest';
+    const tupletCount = tuplet ? parseInt(tuplet, 10) : 0;
+    const isFirstInTuplet = tuplet && !isRest && tupletCounter === 0;
+
     const newNote: ScoreNote = {
       id: Math.random().toString(36).substr(2, 9),
       pitch,
@@ -558,6 +581,9 @@ export default function ScoreEditor() {
       accidental: isRest ? '' as Accidental : accidental,
       duration,
       tie: isRest ? false : tie,
+      tuplet: isFirstInTuplet ? tuplet : undefined,
+      tupletSpan: isFirstInTuplet ? duration : undefined,
+      tupletNoteDur: isFirstInTuplet ? getTupletNoteDuration(tuplet, duration) : undefined,
     };
     setState(p => {
       const arr = isBass ? (p.bassNotes || []) : p.notes;
@@ -568,7 +594,17 @@ export default function ScoreEditor() {
       return { ...p, ...(isBass ? { bassNotes: newArr } : { notes: newArr }) };
     });
     setSelectedNote({ id: newNote.id, staff: selectedNote.staff });
-  }, [selectedNote, octave, accidental, duration, tie]);
+
+    if (tuplet && !isRest) {
+      const next = tupletCounter + 1;
+      if (next >= tupletCount) {
+        setTupletCounter(0);
+        setTuplet('');
+      } else {
+        setTupletCounter(next);
+      }
+    }
+  }, [selectedNote, octave, accidental, duration, tie, tuplet, tupletCounter]);
 
   // 키보드 단축키
   const handleAddNoteRef = useRef(handleAddNote);
@@ -632,50 +668,47 @@ export default function ScoreEditor() {
   // ── 렌더링 ──────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col md:flex-row gap-0 md:gap-5 h-full md:p-5">
+    <div className="flex flex-col md:flex-row gap-0 md:gap-5 min-h-full md:p-5">
 
       {/* ═══════════════════════════════════════════════
           모바일: 설정 툴바 (상단 고정, 간결한 칩 형태)
           ═══════════════════════════════════════════════ */}
+      {/* 상단 툴바: 4버튼 균등 배치 (360px 기준, 스크롤 없음) */}
       <div
-        className="md:hidden flex items-center gap-2 px-3 py-2 overflow-x-auto"
-        style={{
-          background: 'var(--surface)',
-          borderBottom: '1px solid var(--border)',
-          WebkitOverflowScrolling: 'touch',
-        }}
+        className="md:hidden grid grid-cols-4 gap-1.5 px-2 py-2 sticky top-0 z-[60]"
+        style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}
       >
         <button
           onClick={() => setMobileSheet('settings')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold flex-shrink-0 active:scale-95 transition-transform"
+          className="flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold active:scale-95 transition-transform"
           style={{ background: 'var(--primary)18', color: 'var(--primary)', WebkitTapHighlightColor: 'transparent' }}
         >
-          <Sliders size={13} />
-          {state.keySignature} · {state.timeSignature}
+          <Sliders size={15} />
+          <span>{state.keySignature}·{state.timeSignature}</span>
         </button>
         <button
           onClick={() => setMobileSheet('playback')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold flex-shrink-0 active:scale-95 transition-transform"
+          className="flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold active:scale-95 transition-transform"
           style={{ background: '#EEF2FF', color: 'var(--primary)', WebkitTapHighlightColor: 'transparent' }}
         >
-          <Disc3 size={13} />
-          재생 옵션
+          <Disc3 size={15} />
+          <span>재생옵션</span>
         </button>
         <button
           onClick={() => setMobileSheet('generate')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold flex-shrink-0 active:scale-95 transition-transform"
+          className="flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold active:scale-95 transition-transform"
           style={{ background: '#FEF3C7', color: '#92400e', WebkitTapHighlightColor: 'transparent' }}
         >
-          <Sparkles size={13} />
-          자동 생성
+          <Sparkles size={15} />
+          <span>자동생성</span>
         </button>
         <button
           onClick={() => setMobileSheet('saved')}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold flex-shrink-0 active:scale-95 transition-transform"
+          className="flex flex-col items-center justify-center gap-0.5 py-2 rounded-xl text-[11px] font-semibold active:scale-95 transition-transform"
           style={{ background: 'var(--background)', color: 'var(--muted)', border: '1px solid var(--border)', WebkitTapHighlightColor: 'transparent' }}
         >
-          <Archive size={13} />
-          저장
+          <Archive size={15} />
+          <span>저장</span>
         </button>
       </div>
 
@@ -1179,10 +1212,10 @@ export default function ScoreEditor() {
               />
             )}
           </div>
-          {/* 수정 모드 표시 */}
+          {/* 수정 모드 표시 — PC 전용 (모바일은 하단 고정바 상단에 표시) */}
           {noteCount > 0 && (
             <div
-              className="px-3 md:px-4 py-2 text-xs flex items-center gap-2 transition-colors"
+              className="hidden md:flex px-3 md:px-4 py-2 text-xs items-center gap-2 transition-colors"
               style={{
                 background: selectedNote ? '#fef2f2' : 'var(--background)',
                 color: selectedNote ? '#dc2626' : 'var(--muted)',
@@ -1223,9 +1256,9 @@ export default function ScoreEditor() {
         )}
 
         {/* ═══════════════════════════════════════════════
-            음표 입력 팔레트
+            음표 입력 팔레트 (PC 전용 — 모바일은 하단 고정바 사용)
             ═══════════════════════════════════════════════ */}
-        <Card className={`md:rounded-2xl rounded-none border-x-0 md:border-x ${selectedNote ? 'ring-2 ring-amber-300' : ''}`}>
+        <Card className={`hidden md:block md:rounded-2xl ${selectedNote ? 'ring-2 ring-amber-300' : ''}`}>
           <button
             className="w-full flex items-center justify-between px-3 md:px-4 py-2.5"
             onClick={() => setPaletteOpen(v => !v)}
@@ -1408,14 +1441,17 @@ export default function ScoreEditor() {
                 <div className="flex gap-1.5 md:gap-2 items-center">
                   {PITCHES.map(p => (
                     <button key={p} onClick={() => handleAddNote(p)}
-                      className="flex-1 h-11 md:h-12 rounded-xl shadow-sm text-base md:text-lg font-bold active:scale-90 transition-all"
+                      className={`flex-1 h-11 md:h-14 rounded-xl shadow-sm flex flex-col items-center justify-center active:scale-95 transition-all ${
+                        selectedNote ? 'ring-4 ring-amber-400 ring-offset-2' : ''
+                      }`}
                       style={{
-                        background: selectedNote ? '#FEF3C7' : 'var(--surface)',
-                        color: selectedNote ? '#92400e' : 'var(--primary)',
-                        border: `2px solid ${selectedNote ? '#FDE68A' : 'var(--primary)30'}`,
+                        background: PITCH_STYLES[p].bg,
+                        color: PITCH_STYLES[p].text,
+                        border: `2px solid ${PITCH_STYLES[p].border}`,
                         WebkitTapHighlightColor: 'transparent',
                       }}>
-                      {p}
+                      <span className="text-base md:text-lg font-bold leading-none">{p}</span>
+                      <span className="text-[10px] md:text-xs opacity-80 mt-0.5 font-bold">{PITCH_LABELS[p]}</span>
                     </button>
                   ))}
                   <div className="w-px h-8" style={{ background: 'var(--border)' }} />
@@ -1472,6 +1508,264 @@ export default function ScoreEditor() {
           )}
         </Card>
 
+        {/* ═══════════════════════════════════════════════
+            모바일: 하단 고정 팔레트 높이만큼 여백
+            ═══════════════════════════════════════════════ */}
+        <div className="md:hidden" style={{ height: '240px' }} aria-hidden="true" />
+      </div>
+
+      {/* ── 모바일 하단 고정 음표 입력 바 ── */}
+      <div
+        className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex flex-col"
+        style={{
+          background: 'var(--surface)',
+          borderTop: `2px solid ${selectedNote ? '#fcd34d' : 'var(--border)'}`,
+          paddingBottom: 'env(safe-area-inset-bottom)',
+          boxShadow: '0 -4px 20px rgba(0,0,0,0.10)',
+        }}
+      >
+        {/* 모바일 상태바 — 항상 팔레트 최상단에 고정 노출 */}
+        {noteCount > 0 && (
+          <div
+            className="flex items-center gap-2 px-3 py-1.5 text-xs transition-colors"
+            style={{
+              background: selectedNote ? '#fef2f2' : 'var(--background)',
+              color: selectedNote ? '#dc2626' : 'var(--muted)',
+              borderBottom: `1px solid ${selectedNote ? '#fecaca' : 'var(--border)'}`,
+            }}
+          >
+            {selectedNote ? (
+              <>
+                <span className="font-bold">수정 모드</span>
+                <button onClick={handleDeselect}
+                  className="ml-auto shrink-0 underline font-medium"
+                  style={{ WebkitTapHighlightColor: 'transparent' }}>
+                  선택 해제
+                </button>
+              </>
+            ) : (
+              <span>음표를 터치하면 수정할 수 있습니다</span>
+            )}
+          </div>
+        )}
+
+        {/* ① 잇단음표 서브메뉴 팝업 (선택 시에만) */}
+        {mobileSubMenu === 'tuplet' && (
+          <div className="px-2 pt-2 pb-1.5 flex gap-1.5 flex-wrap"
+            style={{ borderBottom: '1px solid var(--border)', background: 'var(--background)' }}>
+            {(() => {
+              const TUPLET_LABELS: Record<TupletType, string> = {
+                '': '없음', '2': '2연', '3': '3연', '4': '4연',
+                '5': '5연', '6': '6연', '7': '7연', '8': '8연',
+              };
+              const valid = getValidTupletTypesForDuration(duration);
+              const withCurrent = tuplet && !valid.includes(tuplet) ? [...valid, tuplet] : valid;
+              const options: [TupletType, string][] = [['', '없음'], ...withCurrent.map(t => [t, TUPLET_LABELS[t] || `${t}연`] as [TupletType, string])];
+              return options.map(([v, l]) => (
+                <button key={v} onClick={() => { handleTupletChange(v); setMobileSubMenu(null); }}
+                  className="px-3 py-2 rounded-lg text-sm font-semibold active:scale-90 transition-all"
+                  style={{
+                    background: tuplet === v ? '#f59e0b' : 'var(--surface)',
+                    color: tuplet === v ? 'white' : 'var(--foreground)',
+                    border: tuplet === v ? 'none' : '1px solid var(--border)',
+                    WebkitTapHighlightColor: 'transparent',
+                  }}>
+                  {l}
+                </button>
+              ));
+            })()}
+          </div>
+        )}
+
+        {/* ② 변화표 서브메뉴 팝업 (선택 시에만) */}
+        {mobileSubMenu === 'accidental' && (
+          <div className="px-2 pt-2 pb-1.5 flex gap-1.5"
+            style={{ borderBottom: '1px solid var(--border)', background: 'var(--background)' }}>
+            {ACCIDENTALS.map(a => (
+              <button key={a.label} onClick={() => { handleAccidentalChange(a.value); setMobileSubMenu(null); }}
+                className="flex-1 py-2 rounded-lg text-sm font-semibold active:scale-90 transition-all"
+                style={{
+                  background: accidental === a.value ? '#ef4444' : 'var(--surface)',
+                  color: accidental === a.value ? 'white' : 'var(--foreground)',
+                  border: accidental === a.value ? 'none' : '1px solid var(--border)',
+                  WebkitTapHighlightColor: 'transparent',
+                }}>
+                {a.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ③ 1행: 큰보표 선택(선택적) + 편집 버튼 우측 */}
+        <div className="flex items-center gap-1 px-2 pt-2 pb-1">
+          {/* 큰보표 보표 선택 */}
+          {state.useGrandStaff && !selectedNote && (
+            <>
+              {(['treble', 'bass'] as const).map(s => (
+                <button key={s} onClick={() => setActiveStaff(s)}
+                  className="flex-shrink-0 px-2.5 h-7 rounded-lg text-[11px] font-bold active:scale-90 transition-all"
+                  style={{
+                    background: activeStaff === s ? 'var(--primary)' : 'var(--background)',
+                    color: activeStaff === s ? 'white' : 'var(--foreground)',
+                    border: activeStaff === s ? 'none' : '1px solid var(--border)',
+                    WebkitTapHighlightColor: 'transparent',
+                  }}>
+                  {s === 'treble' ? '높은' : '낮은'}
+                </button>
+              ))}
+            </>
+          )}
+
+          {/* 편집 버튼들 — 오른쪽 끝 고정 */}
+          <div className="ml-auto flex-shrink-0 flex items-center gap-1">
+            {selectedNote ? (
+              <>
+                <button
+                  onClick={() => { if (selectedNote) handleDeleteNote(selectedNote.id, selectedNote.staff); }}
+                  className="w-8 h-7 flex items-center justify-center rounded-lg active:scale-90 transition-all"
+                  style={{ background: '#fef2f2', color: '#ef4444', WebkitTapHighlightColor: 'transparent' }}>
+                  <Trash2 size={13} />
+                </button>
+                <button onClick={handleDeselect}
+                  className="px-2 h-7 rounded-lg text-[11px] font-bold active:scale-90 transition-all"
+                  style={{ background: 'var(--background)', color: 'var(--muted)', border: '1px solid var(--border)', WebkitTapHighlightColor: 'transparent' }}>
+                  해제
+                </button>
+              </>
+            ) : (
+              <>
+                <button onClick={handleUndo} disabled={curNotes.length === 0}
+                  className="w-8 h-7 flex items-center justify-center rounded-lg active:scale-90 transition-all disabled:opacity-30"
+                  style={{ background: 'var(--background)', color: 'var(--foreground)', border: '1px solid var(--border)', WebkitTapHighlightColor: 'transparent' }}>
+                  <Undo size={13} />
+                </button>
+                <button onClick={handleClear} disabled={curNotes.length === 0}
+                  className="w-8 h-7 flex items-center justify-center rounded-lg active:scale-90 transition-all disabled:opacity-30"
+                  style={{ background: '#fef2f2', color: '#ef4444', WebkitTapHighlightColor: 'transparent' }}>
+                  <Trash2 size={13} />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* ④ 2행: 옥타브 인라인 + 변화표·Tie·잇단음 */}
+        <div className="flex items-center gap-1 px-2 pb-1">
+          {/* 옥타브 인라인 */}
+          <button onClick={() => handleOctaveChange(Math.max(2, octave - 1))}
+            className="w-8 h-7 flex items-center justify-center rounded-lg font-bold text-sm active:scale-90 transition-transform flex-shrink-0"
+            style={{ background: 'var(--background)', color: 'var(--foreground)', border: '1px solid var(--border)', WebkitTapHighlightColor: 'transparent' }}>
+            −
+          </button>
+          <span className="w-9 text-center text-[11px] font-bold flex-shrink-0" style={{ color: 'var(--foreground)' }}>
+            Oct{octave}
+          </span>
+          <button onClick={() => handleOctaveChange(Math.min(6, octave + 1))}
+            className="w-8 h-7 flex items-center justify-center rounded-lg font-bold text-sm active:scale-90 transition-transform flex-shrink-0"
+            style={{ background: 'var(--background)', color: 'var(--foreground)', border: '1px solid var(--border)', WebkitTapHighlightColor: 'transparent' }}>
+            +
+          </button>
+
+          <div className="w-px h-5 mx-0.5 flex-shrink-0" style={{ background: 'var(--border)' }} />
+
+          {/* 변화표 버튼 */}
+          <button
+            onClick={() => setMobileSubMenu(mobileSubMenu === 'accidental' ? null : 'accidental')}
+            className="flex-shrink-0 flex items-center gap-0.5 px-2 h-7 rounded-lg text-[11px] font-bold active:scale-90 transition-all"
+            style={{
+              background: mobileSubMenu === 'accidental' ? '#ef4444' : accidental ? '#fef2f2' : 'var(--background)',
+              color: mobileSubMenu === 'accidental' ? 'white' : accidental ? '#ef4444' : 'var(--foreground)',
+              border: (mobileSubMenu === 'accidental' || accidental) ? 'none' : '1px solid var(--border)',
+              WebkitTapHighlightColor: 'transparent',
+            }}>
+            {accidental === '#' ? '♯' : accidental === 'b' ? '♭' : accidental === 'n' ? '♮' : '변화표'}
+            <ChevronDown size={9} />
+          </button>
+
+          {/* 이음표 토글 */}
+          <button onClick={() => setTie(v => !v)}
+            className="flex-shrink-0 px-2 h-7 rounded-lg text-[11px] font-bold active:scale-90 transition-all"
+            style={{
+              background: tie ? 'var(--primary)' : 'var(--background)',
+              color: tie ? 'white' : 'var(--foreground)',
+              border: tie ? 'none' : '1px solid var(--border)',
+              WebkitTapHighlightColor: 'transparent',
+            }}>
+            Tie{tie ? '✓' : ''}
+          </button>
+
+          {/* 잇단음 버튼 */}
+          <button
+            onClick={() => setMobileSubMenu(mobileSubMenu === 'tuplet' ? null : 'tuplet')}
+            className="flex-shrink-0 flex items-center gap-0.5 px-2 h-7 rounded-lg text-[11px] font-bold active:scale-90 transition-all"
+            style={{
+              background: mobileSubMenu === 'tuplet' ? '#f59e0b' : tuplet ? '#FEF3C7' : 'var(--background)',
+              color: mobileSubMenu === 'tuplet' ? 'white' : tuplet ? '#92400e' : 'var(--foreground)',
+              border: (mobileSubMenu === 'tuplet' || tuplet) ? 'none' : '1px solid var(--border)',
+              WebkitTapHighlightColor: 'transparent',
+            }}>
+            {tuplet ? `${tuplet}연` : '잇단음'}
+            {tuplet && !selectedNote && <span className="ml-0.5">({tupletCounter}/{tuplet})</span>}
+            <ChevronDown size={9} />
+          </button>
+        </div>
+
+        {/* ⑤ 3행: 길이 버튼 */}
+        <div className="flex items-center gap-1 px-2 pb-1">
+          {DURATIONS.map(d => (
+            <button key={d.value} onClick={() => handleBaseDurationClick(d.value)}
+              className="flex-1 py-1.5 rounded-lg text-[11px] font-bold active:scale-90 transition-all"
+              style={{
+                background: baseDur === d.value ? 'var(--primary)' : 'var(--background)',
+                color: baseDur === d.value ? 'white' : 'var(--foreground)',
+                border: baseDur === d.value ? 'none' : '1px solid var(--border)',
+                WebkitTapHighlightColor: 'transparent',
+              }}>
+              {d.label}
+            </button>
+          ))}
+          <button onClick={handleDotToggle} disabled={dotDisabled}
+            className="flex-shrink-0 px-2 py-1.5 rounded-lg text-[11px] font-bold active:scale-90 transition-all"
+            style={{
+              background: hasDot ? '#ef4444' : 'var(--background)',
+              color: hasDot ? 'white' : dotDisabled ? 'var(--border)' : 'var(--foreground)',
+              border: hasDot ? 'none' : '1px solid var(--border)',
+              opacity: dotDisabled ? 0.4 : 1,
+              WebkitTapHighlightColor: 'transparent',
+            }}>
+            점·
+          </button>
+        </div>
+
+        {/* ⑤ CDEFGAB + 쉼표 버튼 행 — flex + 짤림 없음 */}
+        <div className="flex gap-1 px-2 pb-2">
+          {PITCHES.map(p => (
+            <button key={p} onClick={() => handleAddNote(p)}
+              className={`flex-1 h-12 rounded-xl flex flex-col items-center justify-center active:scale-95 transition-all px-0 ${
+                selectedNote ? 'ring-2 ring-amber-400 ring-offset-1' : ''
+              }`}
+              style={{
+                background: PITCH_STYLES[p].bg,
+                color: PITCH_STYLES[p].text,
+                border: `2px solid ${PITCH_STYLES[p].border}`,
+                WebkitTapHighlightColor: 'transparent',
+                minWidth: 0,
+              }}>
+              <span className="text-xs font-bold leading-tight">{p}</span>
+              <span className="text-[9px] font-bold leading-tight">{PITCH_LABELS[p]}</span>
+            </button>
+          ))}
+          <button onClick={() => handleAddNote('rest')}
+            className="flex-shrink-0 w-12 h-11 rounded-xl text-[11px] font-bold active:scale-90 transition-all"
+            style={{
+              background: 'var(--background)',
+              color: 'var(--muted)',
+              border: '1px solid var(--border)',
+              WebkitTapHighlightColor: 'transparent',
+            }}>
+            쉼표
+          </button>
+        </div>
       </div>
     </div>
   );
