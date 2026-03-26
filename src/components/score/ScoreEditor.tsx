@@ -209,6 +209,8 @@ export default function ScoreEditor() {
   const [tupletCounter, setTupletCounter] = useState(0);
   const [activeStaff, setActiveStaff] = useState<'treble' | 'bass'>('treble');
   const [selectedNote, setSelectedNote] = useState<{ id: string; staff: 'treble' | 'bass' } | null>(null);
+  /** 수정 모드에서 Tie로 잇기할 때, 첫 음표(이음 시작점). 다음 악보 클릭으로 끝점 지정 */
+  const [pendingTieFrom, setPendingTieFrom] = useState<{ id: string; staff: 'treble' | 'bass' } | null>(null);
 
   // 재생 옵션
   const [prependBasePitch, setPrependBasePitch] = useState(false);
@@ -260,7 +262,22 @@ export default function ScoreEditor() {
     setTupletCounter(0);
   };
 
-  const handleDeselect = () => setSelectedNote(null);
+  const handleDeselect = () => {
+    setSelectedNote(null);
+    setPendingTieFrom(null);
+  };
+
+  const handleTieButtonClick = () => {
+    if (!selectedNote) {
+      setTie(v => !v);
+      return;
+    }
+    if (pendingTieFrom?.id === selectedNote.id) {
+      setPendingTieFrom(null);
+      return;
+    }
+    setPendingTieFrom({ id: selectedNote.id, staff: selectedNote.staff });
+  };
 
   const handleTupletChange = (newTuplet: TupletType) => {
     if (!selectedNote) {
@@ -448,6 +465,7 @@ export default function ScoreEditor() {
   };
 
   const handleAddNote = (pitch: PitchName) => {
+    setPendingTieFrom(null);
     if (selectedNote) { handleModifyNotePitch(pitch); return; }
     const isRest = pitch === 'rest';
     const tupletCount = tuplet ? parseInt(tuplet, 10) : 0;
@@ -479,6 +497,7 @@ export default function ScoreEditor() {
 
   const handleInsertBefore = (index: number, staff: 'treble' | 'bass') => {
     setSelectedNote(null);
+    setPendingTieFrom(null);
     setActiveStaff(staff);
     const isBass = staff === 'bass';
     const newNote: ScoreNote = {
@@ -502,15 +521,59 @@ export default function ScoreEditor() {
                                 : { notes: arr.filter(n => n.id !== id) }) };
     });
     if (selectedNote?.id === id) setSelectedNote(null);
+    setPendingTieFrom(p => (p?.id === id ? null : p));
   };
 
   const handleAbcNoteClick = useCallback((noteIndex: number, voice: 'treble' | 'bass') => {
     const arr = voice === 'bass' ? (state.bassNotes || []) : state.notes;
-    if (noteIndex < arr.length) {
-      handleSelectNote(arr[noteIndex].id, voice);
+    if (noteIndex >= arr.length) return;
+    const clickedNote = arr[noteIndex];
+
+    if (pendingTieFrom) {
+      if (voice !== pendingTieFrom.staff) {
+        alert('같은 오선의 음표만 잇을 수 있습니다.');
+        return;
+      }
+      const fromArr = arr;
+      const fromIdx = fromArr.findIndex(n => n.id === pendingTieFrom.id);
+      if (fromIdx < 0) {
+        setPendingTieFrom(null);
+        return;
+      }
+      if (clickedNote.id === pendingTieFrom.id) {
+        handleSelectNote(clickedNote.id, voice);
+        setPaletteOpen(true);
+        return;
+      }
+      if (fromIdx + 1 !== noteIndex) {
+        alert('바로 다음 음표만 잇을 수 있습니다.');
+        return;
+      }
+      const fromNote = fromArr[fromIdx];
+      const toNote = clickedNote;
+      if (fromNote.pitch === 'rest' || toNote.pitch === 'rest') {
+        alert('쉼표에는 잇기를 할 수 없습니다.');
+        return;
+      }
+      const isBass = voice === 'bass';
+      setState(p => {
+        const pArr = isBass ? (p.bassNotes || []) : p.notes;
+        const pIdx = pArr.findIndex(n => n.id === pendingTieFrom.id);
+        if (pIdx < 0) return p;
+        const next = [...pArr];
+        next[pIdx] = { ...next[pIdx], tie: true };
+        return { ...p, ...(isBass ? { bassNotes: next } : { notes: next }) };
+      });
+      setPendingTieFrom(null);
+      setSelectedNote({ id: clickedNote.id, staff: voice });
+      setTie(false);
       setPaletteOpen(true);
+      return;
     }
-  }, [state.notes, state.bassNotes]);  // eslint-disable-line
+
+    handleSelectNote(clickedNote.id, voice);
+    setPaletteOpen(true);
+  }, [state.notes, state.bassNotes, pendingTieFrom]);
 
   const selectedNoteAbcInfo = (() => {
     if (!selectedNote) return null;
@@ -521,6 +584,7 @@ export default function ScoreEditor() {
   })();
 
   const handleUndo = () => {
+    setPendingTieFrom(null);
     const isBass = state.useGrandStaff && activeStaff === 'bass';
     setState(p => isBass
       ? { ...p, bassNotes: (p.bassNotes || []).slice(0, -1) }
@@ -530,6 +594,8 @@ export default function ScoreEditor() {
   const handleClear = () => {
     const isBass = state.useGrandStaff && activeStaff === 'bass';
     if (confirm(`${isBass ? '낮은' : '높은'}음자리의 모든 음표를 지우시겠습니까?`)) {
+      setPendingTieFrom(null);
+      setSelectedNote(null);
       setState(p => isBass ? { ...p, bassNotes: [] } : { ...p, notes: [] });
     }
   };
@@ -540,6 +606,8 @@ export default function ScoreEditor() {
       difficulty: genDifficulty, measures: genMeasures,
       useGrandStaff: state.useGrandStaff ?? false,
     });
+    setPendingTieFrom(null);
+    setSelectedNote(null);
     setState(p => ({ ...p, notes: result.trebleNotes, bassNotes: result.bassNotes }));
     setShowGenPanel(false);
     setMobileSheet(null);
@@ -552,6 +620,8 @@ export default function ScoreEditor() {
   }, [state]);
 
   const handleLoadScore = useCallback((saved: SavedScore) => {
+    setPendingTieFrom(null);
+    setSelectedNote(null);
     setState(saved.state); setShowSavedList(false); setPreviewScore(null); setMobileSheet(null);
   }, []);
 
@@ -568,6 +638,7 @@ export default function ScoreEditor() {
   }, []);
 
   const handleInsertAfterSelected = useCallback((pitch: PitchName) => {
+    setPendingTieFrom(null);
     if (!selectedNote) return;
     const isBass = selectedNote.staff === 'bass';
     const isRest = pitch === 'rest';
@@ -613,6 +684,8 @@ export default function ScoreEditor() {
   handleInsertAfterRef.current = handleInsertAfterSelected;
   const selectedNoteRef = useRef(selectedNote);
   selectedNoteRef.current = selectedNote;
+  const pendingTieFromRef = useRef(pendingTieFrom);
+  pendingTieFromRef.current = pendingTieFrom;
   useEffect(() => {
     const MAP: Record<string, PitchName> = { '1':'C','2':'D','3':'E','4':'F','5':'G','6':'A','7':'B' };
     const onKey = (e: KeyboardEvent) => {
@@ -630,7 +703,11 @@ export default function ScoreEditor() {
       }
       if (e.key === 'ArrowUp')   { e.preventDefault(); setOctave(v => Math.min(6, v + 1)); }
       if (e.key === 'ArrowDown') { e.preventDefault(); setOctave(v => Math.max(2, v - 1)); }
-      if (e.key === 'Escape') setSelectedNote(null);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (pendingTieFromRef.current) setPendingTieFrom(null);
+        else setSelectedNote(null);
+      }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
@@ -1225,6 +1302,9 @@ export default function ScoreEditor() {
               {selectedNote ? (
                 <>
                   <span className="font-bold">수정 모드</span>
+                  {pendingTieFrom?.id === selectedNote.id && (
+                    <span className="font-bold" style={{ color: '#b45309' }}>— 다음 음표를 눌러주세요</span>
+                  )}
                   <span className="hidden sm:inline">— 팔레트에서 수정</span>
                   <button onClick={handleDeselect}
                     className="ml-auto shrink-0 underline font-medium"
@@ -1391,15 +1471,15 @@ export default function ScoreEditor() {
                 {/* 이음표 */}
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wide mb-1" style={{ color: 'var(--muted)' }}>이음표</p>
-                  <button onClick={() => setTie(v => !v)}
+                  <button onClick={handleTieButtonClick}
                     className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-all active:scale-90"
                     style={{
-                      background: tie ? 'var(--primary)' : 'var(--background)',
-                      color: tie ? 'white' : 'var(--foreground)',
-                      border: tie ? 'none' : '1px solid var(--border)',
+                      background: pendingTieFrom?.id === selectedNote?.id ? '#f59e0b' : tie ? 'var(--primary)' : 'var(--background)',
+                      color: pendingTieFrom?.id === selectedNote?.id || tie ? 'white' : 'var(--foreground)',
+                      border: (pendingTieFrom?.id === selectedNote?.id || tie) ? 'none' : '1px solid var(--border)',
                       WebkitTapHighlightColor: 'transparent',
                     }}>
-                    Tie {tie ? 'ON' : 'OFF'}
+                    {pendingTieFrom?.id === selectedNote?.id ? 'Tie 취소' : selectedNote ? 'Tie (다음 음)' : `Tie ${tie ? 'ON' : 'OFF'}`}
                   </button>
                 </div>
 
@@ -1537,6 +1617,9 @@ export default function ScoreEditor() {
             {selectedNote ? (
               <>
                 <span className="font-bold">수정 모드</span>
+                {pendingTieFrom?.id === selectedNote.id && (
+                  <span className="font-bold shrink-0" style={{ color: '#b45309' }}>다음 음표를 눌러주세요</span>
+                )}
                 <button onClick={handleDeselect}
                   className="ml-auto shrink-0 underline font-medium"
                   style={{ WebkitTapHighlightColor: 'transparent' }}>
@@ -1683,15 +1766,15 @@ export default function ScoreEditor() {
           </button>
 
           {/* 이음표 토글 */}
-          <button onClick={() => setTie(v => !v)}
+          <button onClick={handleTieButtonClick}
             className="flex-shrink-0 px-2 h-7 rounded-lg text-[11px] font-bold active:scale-90 transition-all"
             style={{
-              background: tie ? 'var(--primary)' : 'var(--background)',
-              color: tie ? 'white' : 'var(--foreground)',
-              border: tie ? 'none' : '1px solid var(--border)',
+              background: pendingTieFrom?.id === selectedNote?.id ? '#f59e0b' : tie ? 'var(--primary)' : 'var(--background)',
+              color: pendingTieFrom?.id === selectedNote?.id || tie ? 'white' : 'var(--foreground)',
+              border: (pendingTieFrom?.id === selectedNote?.id || tie) ? 'none' : '1px solid var(--border)',
               WebkitTapHighlightColor: 'transparent',
             }}>
-            Tie{tie ? '✓' : ''}
+            {pendingTieFrom?.id === selectedNote?.id ? '취소' : selectedNote ? 'Tie' : `Tie${tie ? '✓' : ''}`}
           </button>
 
           {/* 잇단음 버튼 */}
