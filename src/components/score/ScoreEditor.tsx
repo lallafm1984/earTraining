@@ -26,7 +26,10 @@ import {
   Keyboard, Wand2, ChevronDown, ChevronUp, Music2, Settings2,
   RefreshCw, Plus, ChevronRight, Sliders, Disc3, Sparkles, Archive,
 } from 'lucide-react';
-import { generateScore, Difficulty } from '@/lib/scoreGenerator';
+import {
+  generateScore, Difficulty, DifficultyCategory, BassDifficulty,
+  getDifficultyCategory, BASS_DIFF_LABELS, BASS_DIFF_DESC,
+} from '@/lib/scoreGenerator';
 
 // ── SVG → PNG ──────────────────────────────────────────────────
 const TARGET_WIDTH = 1920;
@@ -113,11 +116,34 @@ const PITCH_STYLES: Record<string, { bg: string; text: string; border: string }>
   B: { bg: '#f3e8ff', text: '#6b21a8', border: '#e9d5ff' }, // Purple
 };
 
-const DIFF_LABELS: Record<Difficulty, string> = { beginner:'초급', intermediate:'중급', advanced:'고급' };
+const DIFF_CATEGORY_LABELS: Record<DifficultyCategory, string> = {
+  beginner: '초급', intermediate: '중급', advanced: '고급',
+};
+const DIFF_CATEGORY_COLORS: Record<DifficultyCategory, { bg: string; text: string; activeBg: string }> = {
+  beginner: { bg: '#ecfdf5', text: '#065f46', activeBg: '#10b981' },
+  intermediate: { bg: '#fef9c3', text: '#854d0e', activeBg: '#f59e0b' },
+  advanced: { bg: '#fce7f3', text: '#9d174d', activeBg: '#ec4899' },
+};
+const ALL_DIFFICULTIES: Difficulty[] = [
+  'beginner_1', 'beginner_2', 'beginner_3',
+  'intermediate_1', 'intermediate_2', 'intermediate_3',
+  'advanced_1', 'advanced_2', 'advanced_3',
+];
+const DIFF_LABELS: Record<Difficulty, string> = {
+  beginner_1: '초급 1', beginner_2: '초급 2', beginner_3: '초급 3',
+  intermediate_1: '중급 1', intermediate_2: '중급 2', intermediate_3: '중급 3',
+  advanced_1: '고급 1', advanced_2: '고급 2', advanced_3: '고급 3',
+};
 const DIFF_DESC: Record<Difficulty, string> = {
-  beginner: '온·2분·4분음표, 순차 2~3도',
-  intermediate: '8분·점4분, 4~8도 도약, 임시표·3연음',
-  advanced: '16분·당김음·임시표, 대위법 성부',
+  beginner_1: '온음표 · 2분음표',
+  beginner_2: '4분음표 · 점2분 · 쉼표',
+  beginner_3: '8분음표 · 8분쉼표',
+  intermediate_1: '점4분음표',
+  intermediate_2: '붙임줄 · 당김음',
+  intermediate_3: '16분음표 · 16분쉼표',
+  advanced_1: '점8분음표',
+  advanced_2: '임시표 (♯ · ♭ · ♮)',
+  advanced_3: '셋잇단음표',
 };
 
 // ── 바텀시트 오버레이 ──
@@ -199,7 +225,7 @@ function SettingChip({ label }: { label: string }) {
 
 export default function ScoreEditor() {
   const [state, setState] = useState<ScoreState>({
-    title: '새 악보', keySignature: 'C', timeSignature: '4/4', tempo: 120, notes: [],
+    title: '새 악보', keySignature: 'C', timeSignature: '4/4', tempo: 80, notes: [],
   });
   const [duration, setDuration]     = useState<NoteDuration>('4');
   const [accidental, setAccidental] = useState<Accidental>('');
@@ -221,13 +247,14 @@ export default function ScoreEditor() {
   const [examWaitSeconds, setExamWaitSeconds]   = useState(3);
 
   // 패널
-  const [showGenPanel, setShowGenPanel]     = useState(false);
   const [showSavedList, setShowSavedList]   = useState(false);
   const [previewScore, setPreviewScore]     = useState<SavedScore | null>(null);
   const [paletteOpen, setPaletteOpen]       = useState(true);
 
   // 자동생성
-  const [genDifficulty, setGenDifficulty] = useState<Difficulty>('beginner');
+  const [genDifficulty, setGenDifficulty] = useState<Difficulty>('beginner_1');
+  const [genCategory, setGenCategory]     = useState<DifficultyCategory>('beginner');
+  const [genBassDifficulty, setGenBassDifficulty] = useState<BassDifficulty>('bass_1');
   const [genMeasures, setGenMeasures]     = useState(4);
   const [savedScores, setSavedScores]     = useState<SavedScore[]>([]);
 
@@ -601,17 +628,18 @@ export default function ScoreEditor() {
   };
 
   const handleGenerate = useCallback(() => {
+    window.dispatchEvent(new Event('abcjs-force-stop'));
     const result = generateScore({
       keySignature: state.keySignature, timeSignature: state.timeSignature,
       difficulty: genDifficulty, measures: genMeasures,
       useGrandStaff: state.useGrandStaff ?? false,
+      bassDifficulty: (state.useGrandStaff ?? false) ? genBassDifficulty : undefined,
     });
     setPendingTieFrom(null);
     setSelectedNote(null);
-    setState(p => ({ ...p, notes: result.trebleNotes, bassNotes: result.bassNotes }));
-    setShowGenPanel(false);
+    setState(p => ({ ...p, notes: result.trebleNotes, bassNotes: result.bassNotes, barsPerStaff: 4 }));
     setMobileSheet(null);
-  }, [state.keySignature, state.timeSignature, state.useGrandStaff, genDifficulty, genMeasures]);
+  }, [state.keySignature, state.timeSignature, state.useGrandStaff, genDifficulty, genMeasures, genBassDifficulty]);
 
   const handleSave = useCallback(() => {
     const scores = getSavedScores();
@@ -908,40 +936,93 @@ export default function ScoreEditor() {
 
       {/* 자동 생성 시트 */}
       <BottomSheet open={mobileSheet === 'generate'} onClose={() => setMobileSheet(null)} title="자동 생성">
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-4">
+          {/* 선율 난이도 — 카테고리별 카드 */}
           <div>
-            <p className="text-xs font-bold mb-2" style={{ color: 'var(--muted)' }}>난이도</p>
-            <div className="flex gap-2">
-              {(['beginner','intermediate','advanced'] as Difficulty[]).map(d => (
-                <button key={d} onClick={() => setGenDifficulty(d)}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95"
-                  style={{
-                    background: genDifficulty === d ? 'var(--primary)' : 'var(--background)',
-                    color: genDifficulty === d ? 'white' : 'var(--foreground)',
-                    border: genDifficulty === d ? 'none' : '1px solid var(--border)',
-                    WebkitTapHighlightColor: 'transparent',
-                  }}>
-                  {DIFF_LABELS[d]}
-                </button>
-              ))}
-            </div>
-            <p className="text-xs mt-2" style={{ color: 'var(--muted)' }}>{DIFF_DESC[genDifficulty]}</p>
+            <p className="text-xs font-bold mb-2" style={{ color: 'var(--muted)' }}>선율 난이도</p>
+            {(['beginner','intermediate','advanced'] as DifficultyCategory[]).map(cat => {
+              const colors = DIFF_CATEGORY_COLORS[cat];
+              const subLevels = ALL_DIFFICULTIES.filter(d => getDifficultyCategory(d) === cat);
+              return (
+                <div key={cat} className="mb-2">
+                  <div className="inline-block px-2.5 py-1 rounded-lg text-xs font-bold mb-1.5"
+                    style={{ background: colors.bg, color: colors.text }}>
+                    {DIFF_CATEGORY_LABELS[cat]}
+                  </div>
+                  <div className="flex gap-2">
+                    {subLevels.map(d => {
+                      const isActive = genDifficulty === d;
+                      return (
+                        <button key={d} onClick={() => { setGenCategory(getDifficultyCategory(d)); setGenDifficulty(d); }}
+                          className="flex-1 flex flex-col items-center py-2.5 px-1 rounded-xl text-center transition-all active:scale-95"
+                          style={{
+                            background: isActive ? colors.activeBg : colors.bg,
+                            border: `1px solid ${isActive ? colors.activeBg : colors.text + '28'}`,
+                            boxShadow: isActive ? `0 2px 5px ${colors.activeBg}59` : 'none',
+                            WebkitTapHighlightColor: 'transparent',
+                          }}>
+                          <span className="text-xs font-bold" style={{ color: isActive ? '#fff' : colors.text }}>
+                            {d.split('_')[1]}단계
+                          </span>
+                          <span className="text-[10px] leading-tight mt-0.5" style={{ color: isActive ? 'rgba(255,255,255,0.85)' : colors.text + 'cc' }}>
+                            {DIFF_DESC[d]}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
+          {/* 베이스 난이도 */}
+          {(state.useGrandStaff ?? false) && (
+            <div>
+              <p className="text-xs font-bold mb-2" style={{ color: '#7c3aed' }}>베이스 난이도</p>
+              <div className="flex gap-2">
+                {(['bass_1','bass_2','bass_3','bass_4'] as BassDifficulty[]).map(bd => {
+                  const isActive = genBassDifficulty === bd;
+                  return (
+                    <button key={bd} onClick={() => setGenBassDifficulty(bd)}
+                      className="flex-1 flex flex-col items-center py-2.5 px-1 rounded-xl text-center transition-all active:scale-95"
+                      style={{
+                        background: isActive ? '#7c3aed' : '#f3e8ff',
+                        border: `1px solid ${isActive ? '#7c3aed' : '#7c3aed28'}`,
+                        boxShadow: isActive ? '0 2px 5px rgba(124,58,237,0.35)' : 'none',
+                        WebkitTapHighlightColor: 'transparent',
+                      }}>
+                      <span className="text-xs font-bold" style={{ color: isActive ? '#fff' : '#7c3aed' }}>
+                        {BASS_DIFF_LABELS[bd]}
+                      </span>
+                      <span className="text-[10px] leading-tight mt-0.5" style={{ color: isActive ? 'rgba(255,255,255,0.85)' : '#7c3aedcc' }}>
+                        {BASS_DIFF_DESC[bd]}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {/* 마디 수 */}
           <div>
             <p className="text-xs font-bold mb-2" style={{ color: 'var(--muted)' }}>마디 수</p>
             <div className="flex gap-2">
-              {[4, 8, 12, 16].map(n => (
-                <button key={n} onClick={() => setGenMeasures(n)}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95"
-                  style={{
-                    background: genMeasures === n ? 'var(--primary)' : 'var(--background)',
-                    color: genMeasures === n ? 'white' : 'var(--foreground)',
-                    border: genMeasures === n ? 'none' : '1px solid var(--border)',
-                    WebkitTapHighlightColor: 'transparent',
-                  }}>
-                  {n}
-                </button>
-              ))}
+              {[4, 8, 12, 16].map(n => {
+                const isActive = genMeasures === n;
+                return (
+                  <button key={n} onClick={() => setGenMeasures(n)}
+                    className="flex-1 flex flex-col items-center py-2.5 rounded-xl text-sm font-semibold transition-all active:scale-95"
+                    style={{
+                      background: isActive ? '#6366f1' : '#f1f5f9',
+                      border: `1px solid ${isActive ? '#6366f1' : '#e2e8f0'}`,
+                      boxShadow: isActive ? '0 2px 5px rgba(99,102,241,0.3)' : 'none',
+                      WebkitTapHighlightColor: 'transparent',
+                    }}>
+                    <span className="font-bold" style={{ color: isActive ? '#fff' : '#334155' }}>{n}</span>
+                    <span className="text-[10px]" style={{ color: isActive ? 'rgba(255,255,255,0.75)' : '#94a3b8' }}>마디</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
           <button onClick={handleGenerate}
@@ -949,9 +1030,6 @@ export default function ScoreEditor() {
             style={{ background: 'var(--primary)', WebkitTapHighlightColor: 'transparent' }}>
             <RefreshCw size={15} /> 생성하기
           </button>
-          <p className="text-xs text-center" style={{ color: 'var(--muted)' }}>
-            현재 조성·박자·큰보표 설정이 적용됩니다. 기존 음표는 교체됩니다.
-          </p>
         </div>
       </BottomSheet>
 
@@ -1114,54 +1192,94 @@ export default function ScoreEditor() {
 
         {/* 자동 생성 */}
         <Card>
-          <button className="w-full flex items-center justify-between px-4 py-3"
-            onClick={() => setShowGenPanel(v => !v)}>
-            <div className="flex items-center gap-2">
-              <Wand2 size={15} style={{ color: '#f59e0b' }} />
-              <span className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>자동 생성</span>
-              <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: '#FEF3C7', color: '#92400e' }}>
-                {DIFF_LABELS[genDifficulty]} · {genMeasures}마디
-              </span>
-            </div>
-            {showGenPanel ? <ChevronUp size={15} style={{ color: 'var(--muted)' }} /> : <ChevronDown size={15} style={{ color: 'var(--muted)' }} />}
-          </button>
-          {showGenPanel && (
-            <div className="px-4 py-4 flex flex-col gap-4" style={{ borderTop: '1px solid var(--border)' }}>
+          <div className="w-full flex items-center gap-2 px-4 py-3">
+            <Wand2 size={15} style={{ color: '#f59e0b' }} />
+            <span className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>자동 생성</span>
+          </div>
+          <div className="px-4 py-4 flex flex-col gap-4" style={{ borderTop: '1px solid var(--border)' }}>
+              {/* 선율 난이도 — 카테고리별 카드 */}
               <div>
-                <p className="text-xs font-medium mb-2" style={{ color: 'var(--muted)' }}>난이도</p>
-                <div className="flex gap-1.5">
-                  {(['beginner','intermediate','advanced'] as Difficulty[]).map(d => (
-                    <button key={d} onClick={() => setGenDifficulty(d)}
-                      className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-                        genDifficulty === d ? 'text-white shadow-sm' : 'hover:opacity-80'
-                      }`}
-                      style={{
-                        background: genDifficulty === d ? 'var(--primary)' : 'var(--background)',
-                        color: genDifficulty === d ? 'white' : 'var(--foreground)',
-                        border: genDifficulty === d ? 'none' : '1px solid var(--border)',
-                      }}>
-                      {DIFF_LABELS[d]}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs mt-1.5" style={{ color: 'var(--muted)' }}>{DIFF_DESC[genDifficulty]}</p>
+                <p className="text-xs font-medium mb-2" style={{ color: 'var(--muted)' }}>선율 난이도</p>
+                {(['beginner','intermediate','advanced'] as DifficultyCategory[]).map(cat => {
+                  const colors = DIFF_CATEGORY_COLORS[cat];
+                  const subLevels = ALL_DIFFICULTIES.filter(d => getDifficultyCategory(d) === cat);
+                  return (
+                    <div key={cat} className="mb-2">
+                      <div className="inline-block px-2 py-0.5 rounded-md text-xs font-bold mb-1.5"
+                        style={{ background: colors.bg, color: colors.text }}>
+                        {DIFF_CATEGORY_LABELS[cat]}
+                      </div>
+                      <div className="flex gap-1.5">
+                        {subLevels.map(d => {
+                          const isActive = genDifficulty === d;
+                          return (
+                            <button key={d} onClick={() => { setGenCategory(getDifficultyCategory(d)); setGenDifficulty(d); }}
+                              className="flex-1 flex flex-col items-center py-2 px-1 rounded-lg text-center transition-all"
+                              style={{
+                                background: isActive ? colors.activeBg : colors.bg,
+                                border: `1px solid ${isActive ? colors.activeBg : colors.text + '28'}`,
+                                boxShadow: isActive ? `0 2px 5px ${colors.activeBg}59` : 'none',
+                              }}>
+                              <span className="text-xs font-bold" style={{ color: isActive ? '#fff' : colors.text }}>
+                                {d.split('_')[1]}단계
+                              </span>
+                              <span className="text-[10px] leading-tight mt-0.5" style={{ color: isActive ? 'rgba(255,255,255,0.85)' : colors.text + 'cc' }}>
+                                {DIFF_DESC[d]}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
+              {/* 베이스 난이도 */}
+              {(state.useGrandStaff ?? false) && (
+                <div>
+                  <p className="text-xs font-medium mb-2" style={{ color: '#7c3aed' }}>베이스 난이도</p>
+                  <div className="flex gap-1.5">
+                    {(['bass_1','bass_2','bass_3','bass_4'] as BassDifficulty[]).map(bd => {
+                      const isActive = genBassDifficulty === bd;
+                      return (
+                        <button key={bd} onClick={() => setGenBassDifficulty(bd)}
+                          className="flex-1 flex flex-col items-center py-2 px-1 rounded-lg text-center transition-all"
+                          style={{
+                            background: isActive ? '#7c3aed' : '#f3e8ff',
+                            border: `1px solid ${isActive ? '#7c3aed' : '#7c3aed28'}`,
+                            boxShadow: isActive ? '0 2px 5px rgba(124,58,237,0.35)' : 'none',
+                          }}>
+                          <span className="text-xs font-bold" style={{ color: isActive ? '#fff' : '#7c3aed' }}>
+                            {BASS_DIFF_LABELS[bd]}
+                          </span>
+                          <span className="text-[10px] leading-tight mt-0.5" style={{ color: isActive ? 'rgba(255,255,255,0.85)' : '#7c3aedcc' }}>
+                            {BASS_DIFF_DESC[bd]}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+              {/* 마디 수 */}
               <div>
                 <p className="text-xs font-medium mb-2" style={{ color: 'var(--muted)' }}>마디 수</p>
                 <div className="flex gap-1.5">
-                  {[4, 8, 12, 16].map(n => (
-                    <button key={n} onClick={() => setGenMeasures(n)}
-                      className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all ${
-                        genMeasures === n ? 'text-white shadow-sm' : 'hover:opacity-80'
-                      }`}
-                      style={{
-                        background: genMeasures === n ? 'var(--primary)' : 'var(--background)',
-                        color: genMeasures === n ? 'white' : 'var(--foreground)',
-                        border: genMeasures === n ? 'none' : '1px solid var(--border)',
-                      }}>
-                      {n}
-                    </button>
-                  ))}
+                  {[4, 8, 12, 16].map(n => {
+                    const isActive = genMeasures === n;
+                    return (
+                      <button key={n} onClick={() => setGenMeasures(n)}
+                        className="flex-1 flex flex-col items-center py-2 rounded-lg text-sm font-medium transition-all"
+                        style={{
+                          background: isActive ? '#6366f1' : '#f1f5f9',
+                          border: `1px solid ${isActive ? '#6366f1' : '#e2e8f0'}`,
+                          boxShadow: isActive ? '0 2px 5px rgba(99,102,241,0.3)' : 'none',
+                        }}>
+                        <span className="font-bold" style={{ color: isActive ? '#fff' : '#334155' }}>{n}</span>
+                        <span className="text-[10px]" style={{ color: isActive ? 'rgba(255,255,255,0.75)' : '#94a3b8' }}>마디</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
               <button onClick={handleGenerate}
@@ -1170,7 +1288,6 @@ export default function ScoreEditor() {
                 <RefreshCw size={15} /> 생성하기
               </button>
             </div>
-          )}
         </Card>
 
         {/* 저장/불러오기 */}

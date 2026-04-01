@@ -824,6 +824,24 @@ export default function AbcjsRenderer({
     return () => window.removeEventListener('abcjs-download-audio', handler);
   }, [examMode, handleDownloadAudio, handleExamDownload]);
 
+  // 외부에서 재생 정지 요청
+  useEffect(() => {
+    const stopHandler = () => {
+      if (!isPlaying) return;
+      cancelRef.current = true;
+      if (playEndTimeoutRef.current) {
+        clearTimeout(playEndTimeoutRef.current);
+        playEndTimeoutRef.current = null;
+      }
+      if (synthRef.current) {
+        try { synthRef.current.stop(); } catch { /* ignore */ }
+      }
+      setIsPlaying(false);
+    };
+    window.addEventListener('abcjs-force-stop', stopHandler);
+    return () => window.removeEventListener('abcjs-force-stop', stopHandler);
+  }, [isPlaying]);
+
   return (
     <div className="w-full flex flex-col gap-4 pb-4">
       <div ref={paperRef} className="abcjs-paper w-full min-h-[200px] bg-white text-black p-4 rounded-xl border border-border shadow-sm overflow-x-auto" style={{ touchAction: 'pan-y' }} />
