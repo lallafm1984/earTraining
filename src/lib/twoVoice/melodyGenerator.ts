@@ -21,7 +21,6 @@ import {
   PITCH_ORDER,
   isForbiddenMelodicInterval,
   getKeySigAlteration,
-  getKeySignatureAccidentalCount,
   SIXTEENTHS_TO_DUR,
   sixteenthsToDuration,
   getTupletNoteDuration,
@@ -510,33 +509,6 @@ function selectPitchWithoutBass(
   return nn;
 }
 
-// ────────────────────────────────────────────────────────────────
-// 1-voice inline chromatic accidentals (lvl 3-7)
-// ────────────────────────────────────────────────────────────────
-
-const CHROMATIC_RESOLUTION: Record<string, PitchName> = {
-  'C': 'D', 'D': 'E', 'E': 'F', 'F': 'G', 'G': 'A', 'A': 'B', 'B': 'C',
-};
-
-function pickChromaticAccidental(keySignature: string, pitch: PitchName, level: number): Accidental {
-  const keyAlt = getKeySigAlteration(keySignature, pitch);
-  const r = Math.random();
-  if (keyAlt === '#') {
-    return r < 0.55 ? 'n' : 'b';
-  }
-  if (keyAlt === 'b') {
-    return r < 0.55 ? 'n' : '#';
-  }
-  const canSharp = pitch !== 'E' && pitch !== 'B';
-  const canFlat  = pitch !== 'C' && pitch !== 'F';
-  if (level >= 5) {
-    if (canSharp && canFlat) return r < 0.5 ? '#' : 'b';
-    if (canSharp) return '#';
-    if (canFlat)  return 'b';
-    return 'n';
-  }
-  return canSharp ? '#' : 'b';
-}
 
 // ────────────────────────────────────────────────────────────────
 // 1-voice tendency resolution (lvl 4+)
@@ -817,18 +789,6 @@ export function generateMelody(opts: MelodyGeneratorOptions): ScoreNote[] {
   const tieProbEff = rhythmParams.tieProb * (/^[57]\/8$/.test(timeSig) ? 0.5 : 1.0);
   const oddMeterFactor = /^[57]\/8$/.test(timeSig) ? 0.55 : 1.0;
 
-  // ── 1성부 인라인 임시표 상태 (lvl 3-7, !hasBass) ──
-  let pendingResolution: PitchName | null = null;
-  const keyAccCount = getKeySignatureAccidentalCount(ctx.keySignature);
-  const measureDensity = Math.max(0.62, Math.min(1.75, 0.48 + measures * 0.092));
-  const keyDensityBase = keyAccCount * 0.6 + (keyAccCount >= 5 ? 1 : 0);
-  const chromaticProb = (!ctx.hasBass && melodyLevel >= 3 && melodyLevel < 8)
-    ? Math.min(0.48, 0.15 + keyAccCount * 0.017 * measureDensity + (melodyLevel >= 4 ? 0.035 * Math.min(1.25, 0.75 + measures * 0.04) : 0))
-    : 0;
-  let accidentalBudget = (!ctx.hasBass && melodyLevel >= 3 && melodyLevel < 8)
-    ? 2 + Math.floor(Math.random() * 3) + Math.min(8, Math.floor(keyDensityBase * measureDensity))
-    : 0;
-
   let prevNN = 0;
   let stepwiseCount = 0;
   let totalMoves = 0;
@@ -878,26 +838,6 @@ export function generateMelody(opts: MelodyGeneratorOptions): ScoreNote[] {
       const isStrongBeat = strong16.has(barPos);
 
       let nn: number;
-
-      // ── 1성부: pendingResolution 처리 ──
-      if (!ctx.hasBass && ctx.level >= 3 && pendingResolution) {
-        const rp = pendingResolution; pendingResolution = null;
-        const degIdx = ctx.scale.indexOf(rp);
-        if (degIdx >= 0) {
-          nn = Math.round(prevNN / 7) * 7 + degIdx;
-          nn = clampNN(nn, ctx);
-        } else {
-          nn = prevNN;
-        }
-        barCells.push({ dur16: dur, nns: [nn] });
-        prevFinalNn = nn; consecutiveSame = 0;
-        prevNN = nn;
-        barPos += dur;
-        if (!isFirstNote) { totalMoves++; if (Math.abs(nn - prevNN) <= 1) stepwiseCount++; }
-        else isFirstNote = false;
-        prevInterval = 0;
-        continue;
-      }
 
       if (isFirstNote) {
         // 시작: 으뜸3화음 위주
@@ -1099,24 +1039,6 @@ export function generateMelody(opts: MelodyGeneratorOptions): ScoreNote[] {
       } else {
         const nn = cell.nns[0];
         const { pitch, octave } = noteNumToNote(nn, ctx.scale, ctx.baseOctave);
-
-        // ── 1성부 인라인 임시표 (lvl 3-7) ──
-        if (!ctx.hasBass && accidentalBudget > 0 && chromaticProb > 0 &&
-            cellIdx < barCells.length - 1 && Math.random() < chromaticProb) {
-          if (ctx.scale.includes(pitch)) {
-            const acc = pickChromaticAccidental(ctx.keySignature, pitch, ctx.level);
-            allNotes.push(nnToScoreNote(nn, durLabel, ctx, acc));
-            if (acc === '#' || acc === 'n') {
-              pendingResolution = CHROMATIC_RESOLUTION[pitch] ?? null;
-            } else {
-              pendingResolution = pitch;
-            }
-            accidentalBudget--;
-            emitBarPos += cell.dur16;
-            cellIdx++;
-            continue;
-          }
-        }
 
         // 타이 삽입
         const prevMel = lastNonRestMelody(allNotes);

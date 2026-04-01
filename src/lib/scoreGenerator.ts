@@ -121,9 +121,6 @@ const DURATION_POOL: Record<Difficulty, number[]> = {
   advanced_3:     [8, 6, 6, 4, 4, 4, 3, 2, 1],
 };
 
-const CHROMATIC_RESOLUTION: Record<string, PitchName> = {
-  'C': 'D', 'D': 'E', 'E': 'F', 'F': 'G', 'G': 'A', 'A': 'B', 'B': 'C',
-};
 
 // ────────────────────────────────────────────────────────────────
 // 단조 화성 지원
@@ -208,34 +205,6 @@ function buildBassAttackMidiMap(
   return map;
 }
 
-/**
- * 조성·난이도에 맞게 임시표 종류 선택.
- * 샤프/플랫이 많은 조에서는 조표로 이미 반영된 음에 대해 #만 덧붙이면 ABC에 표시가 안 되므로,
- * 제자리(n)·반대 방향(b/♭ 등)을 섞어 임시표가 보이도록 한다.
- */
-function pickChromaticAccidental(keySignature: string, pitch: PitchName, difficulty: Difficulty): Accidental {
-  const keyAlt = getKeySigAlteration(keySignature, pitch);
-  const lvl = difficultyLevel(difficulty);
-  const r = Math.random();
-  if (keyAlt === '#') {
-    return r < 0.55 ? 'n' : 'b';
-  }
-  if (keyAlt === 'b') {
-    return r < 0.55 ? 'n' : '#';
-  }
-  // 피아노 반음 경계 — E#=F, B#=C, Cb=B, Fb=E는 독립 건반이 없어 혼란을 유발
-  // 자연 반음 위치(E-F, B-C): 위 방향은 #금지, 아래 방향은 b금지
-  const canSharp = pitch !== 'E' && pitch !== 'B';
-  const canFlat  = pitch !== 'C' && pitch !== 'F';
-  if (lvl >= 5) {
-    if (canSharp && canFlat) return r < 0.5 ? '#' : 'b';
-    if (canSharp) return '#';
-    if (canFlat)  return 'b';
-    return 'n';
-  }
-  // lvl < 5: 샤프 우선, E/B는 플랫으로 대체
-  return canSharp ? '#' : 'b';
-}
 
 // ────────────────────────────────────────────────────────────────
 // 난이도별 파라미터 테이블 (문서 기반)
@@ -427,6 +396,9 @@ function tryInsertTriplet(
  * 대위법·강박 보정 등의 후처리에서 음이 이동하면 임시표의 해결 관계가 깨질 수 있다.
  * 1) 해결 없는 임시표 (다음 음과 >3반음) → 임시표 제거
  * 2) 인접 동일 임시표 (같은 음·같은 임시표 연속) → 두 번째 임시표 제거
+ * 3) 진입 단2도 (직전 음과 1반음) → 임시표 제거
+ * 4) 진입 큰도약 (직전 음과 >7반음) → 임시표 제거
+ * 5) 삼전음 (직전 또는 다음 음과 6반음) → 임시표 제거
  */
 function cleanupBrokenAccidentals(notes: ScoreNote[], keySignature: string): void {
   for (let i = 0; i < notes.length; i++) {
@@ -444,8 +416,60 @@ function cleanupBrokenAccidentals(notes: ScoreNote[], keySignature: string): voi
       }
     }
 
-    // ── 해결 없는 임시표: 다음 피치음과 >3반음이면 제거 ──
     const curMidi = noteToMidiWithKey(n, keySignature);
+
+    // ── 직전 피치음과의 관계 검사 ──
+    let prevMidi = -1;
+    for (let j = i - 1; j >= 0; j--) {
+      if (notes[j].pitch !== 'rest') {
+        prevMidi = noteToMidiWithKey(notes[j], keySignature);
+        break;
+      }
+    }
+    if (prevMidi > 0) {
+      const entryDist = Math.abs(curMidi - prevMidi);
+      // 단2도(1반음) 진입: 불협화 충돌
+      if (entryDist === 1) {
+        notes[i] = { ...n, accidental: '' as Accidental };
+        continue;
+      }
+      // 큰 도약(>7반음) 진입: 부자연스러운 연결
+      if (entryDist > 7) {
+        notes[i] = { ...n, accidental: '' as Accidental };
+        continue;
+      }
+      // 삼전음(6반음) 진입
+      if (entryDist === 6) {
+        notes[i] = { ...n, accidental: '' as Accidental };
+        continue;
+      }
+    }
+
+    // ── 같은방향 연속 도약: prev→acc→next 모두 같은 방향 + 양쪽 3반음 이상 ──
+    if (prevMidi > 0) {
+      let nextMidiForDir = -1;
+      for (let j = i + 1; j < notes.length; j++) {
+        if (notes[j].pitch !== 'rest') {
+          nextMidiForDir = noteToMidiWithKey(notes[j], keySignature);
+          break;
+        }
+      }
+      if (nextMidiForDir > 0) {
+        const entryDir = curMidi - prevMidi;
+        const exitDir = nextMidiForDir - curMidi;
+        // 같은 방향으로 양쪽 다 3반음 이상 도약
+        if (entryDir > 0 && exitDir > 0 && Math.abs(entryDir) >= 3 && Math.abs(exitDir) >= 3) {
+          notes[i] = { ...n, accidental: '' as Accidental };
+          continue;
+        }
+        if (entryDir < 0 && exitDir < 0 && Math.abs(entryDir) >= 3 && Math.abs(exitDir) >= 3) {
+          notes[i] = { ...n, accidental: '' as Accidental };
+          continue;
+        }
+      }
+    }
+
+    // ── 다음 피치음과의 관계 검사 ──
     let nextMidi = -1;
     for (let j = i + 1; j < notes.length; j++) {
       if (notes[j].pitch !== 'rest') {
@@ -453,8 +477,18 @@ function cleanupBrokenAccidentals(notes: ScoreNote[], keySignature: string): voi
         break;
       }
     }
-    if (nextMidi > 0 && Math.abs(curMidi - nextMidi) > 3) {
-      notes[i] = { ...n, accidental: '' as Accidental };
+    if (nextMidi > 0) {
+      const exitDist = Math.abs(curMidi - nextMidi);
+      // 해결 없는 임시표: >3반음 도약
+      if (exitDist > 3) {
+        notes[i] = { ...n, accidental: '' as Accidental };
+        continue;
+      }
+      // 삼전음(6반음) 탈출
+      if (exitDist === 6) {
+        notes[i] = { ...n, accidental: '' as Accidental };
+        continue;
+      }
     }
   }
 }
@@ -1261,6 +1295,9 @@ export function generateScore(opts: GeneratorOptions): GeneratedScore {
   //   keySignature, timeSignature, scale,
   //   useGrandStaff, params.consonanceRatio,
   // );
+
+  // ── 최종 임시표 안전망: 모든 후처리(쉼표·분할·반복음·대사관계) 완료 후 ──
+  cleanupBrokenAccidentals(finalTreble, keySignature);
 
   return { trebleNotes: finalTreble, bassNotes: finalBass };
 }

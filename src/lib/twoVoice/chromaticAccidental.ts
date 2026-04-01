@@ -181,6 +181,14 @@ function failsHardConstraint(
   if (prevMidi !== null && prevMidi > 0) {
     if (Math.abs(altMidi - prevMidi) === 6) return true;
   }
+  // RULE_H6: 이전 음과 단2도(1반음) 진입 금지 — 불협화 충돌
+  if (prevMidi !== null && prevMidi > 0) {
+    if (Math.abs(altMidi - prevMidi) === 1) return true;
+  }
+  // RULE_H7: 이전 음과 큰 도약(>7반음) 진입 금지
+  if (prevMidi !== null && prevMidi > 0) {
+    if (Math.abs(altMidi - prevMidi) > 7) return true;
+  }
   return false;
 }
 
