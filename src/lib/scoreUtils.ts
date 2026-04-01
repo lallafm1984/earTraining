@@ -1581,7 +1581,34 @@ export function generateAbc(state: ScoreState): string {
     `K: ${state.keySignature}`,
   ].join('\n');
 
+  // ── 마디 단위로 쪼개기 (공통 헬퍼) ──
+  const extractMeasures = (body: string) => {
+    let cleanBody = body.trim();
+    let endsWithEndBar = false;
+    if (cleanBody.endsWith('|]')) {
+      cleanBody = cleanBody.slice(0, -2) + '|';
+      endsWithEndBar = true;
+    }
+    const arr = cleanBody.split('|').map(m => m.trim()).filter(m => m.length > 0);
+    return { arr, endsWithEndBar };
+  };
+
   if (!useGrandStaff) {
+    const bps = state.barsPerStaff;
+    if (bps !== undefined && bps > 0) {
+      const tData = extractMeasures(trebleBody);
+      const tArr = tData.arr;
+      const numM = tArr.length;
+      let finalAbc = header;
+      let mIdx = 0;
+      while (mIdx < numM) {
+        const take = Math.min(bps, numM - mIdx);
+        finalAbc += '\n';
+        finalAbc += tArr.slice(mIdx, mIdx + take).join(' | ') + ((mIdx + take === numM && tData.endsWithEndBar) ? ' |]' : ' |');
+        mIdx += take;
+      }
+      return finalAbc;
+    }
     return header + '\n' + trebleBody;
   }
 
@@ -1603,18 +1630,6 @@ export function generateAbc(state: ScoreState): string {
       trebleBody = padWithFullRests(trebleBody, bassMeasures);
     }
   }
-
-  // ── 마디 단위로 쪼개기 ──
-  const extractMeasures = (body: string) => {
-    let cleanBody = body.trim();
-    let endsWithEndBar = false;
-    if (cleanBody.endsWith('|]')) {
-      cleanBody = cleanBody.slice(0, -2) + '|';
-      endsWithEndBar = true;
-    }
-    const arr = cleanBody.split('|').map(m => m.trim()).filter(m => m.length > 0);
-    return { arr, endsWithEndBar };
-  };
 
   const tData = extractMeasures(trebleBody);
   const tArr = tData.arr;

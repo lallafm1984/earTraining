@@ -256,6 +256,7 @@ export default function ScoreEditor() {
   const [genCategory, setGenCategory]     = useState<DifficultyCategory>('beginner');
   const [genBassDifficulty, setGenBassDifficulty] = useState<BassDifficulty>('bass_1');
   const [genMeasures, setGenMeasures]     = useState(4);
+  const genForce4Bars = true;
   const [savedScores, setSavedScores]     = useState<SavedScore[]>([]);
 
   // 모바일 바텀시트
@@ -637,9 +638,9 @@ export default function ScoreEditor() {
     });
     setPendingTieFrom(null);
     setSelectedNote(null);
-    setState(p => ({ ...p, notes: result.trebleNotes, bassNotes: result.bassNotes, barsPerStaff: 4 }));
+    setState(p => ({ ...p, notes: result.trebleNotes, bassNotes: result.bassNotes, barsPerStaff: genForce4Bars ? 4 : undefined }));
     setMobileSheet(null);
-  }, [state.keySignature, state.timeSignature, state.useGrandStaff, genDifficulty, genMeasures, genBassDifficulty]);
+  }, [state.keySignature, state.timeSignature, state.useGrandStaff, genDifficulty, genMeasures, genBassDifficulty, genForce4Bars]);
 
   const handleSave = useCallback(() => {
     const scores = getSavedScores();
@@ -1401,6 +1402,7 @@ export default function ScoreEditor() {
                 examMode={examMode}
                 examWaitSeconds={examWaitSeconds}
                 stretchLast={getMeasureCount(state) > 0 && getMeasureCount(state) % 4 === 0}
+                barsPerStaff={state.barsPerStaff}
                 onNoteClick={handleAbcNoteClick}
                 selectedNote={selectedNoteAbcInfo}
               />

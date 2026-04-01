@@ -17,6 +17,7 @@ interface AbcjsRendererProps {
   examMode?: boolean;
   examWaitSeconds?: number;
   stretchLast?: boolean;
+  barsPerStaff?: number;
   onNoteClick?: (noteIndex: number, voice: 'treble' | 'bass') => void;
   selectedNote?: { index: number; voice: 'treble' | 'bass' } | null;
 }
@@ -169,6 +170,7 @@ export default function AbcjsRenderer({
   examMode = false,
   examWaitSeconds = 3,
   stretchLast = true,
+  barsPerStaff,
   onNoteClick,
   selectedNote,
 }: AbcjsRendererProps) {
@@ -189,10 +191,10 @@ export default function AbcjsRenderer({
     abcjs.renderAbc(paperRef.current, abcString, {
       add_classes: true,
       responsive: 'resize',
-      scale: 1.2,
-      staffwidth: 800,
+      scale: 0.9,
+      staffwidth: 1100,
       // 마디 간격을 균일하게 고정 (우측 끝까지 늘리지 않음)
-      wrap: { minSpacing: 1.8, maxSpacing: 1.8, preferredMeasuresPerLine: 4 },
+      wrap: { minSpacing: 1.5, maxSpacing: 2.8, preferredMeasuresPerLine: barsPerStaff || 4 },
       format: { stretchlast: stretchLast },
       clickListener: (_abcElem: any, _tuneNumber: number, _classes: string, analysis: any, _drag: any) => {
         if (!onNoteClickRef.current || !paperRef.current) return;
@@ -208,7 +210,7 @@ export default function AbcjsRenderer({
         if (idx >= 0) onNoteClickRef.current(idx, voice);
       },
     });
-  }, [abcString]); // eslint-disable-line
+  }, [abcString, barsPerStaff, stretchLast]); // eslint-disable-line
 
   // ── 선택 음표 하이라이트 ──
   // CSS 클래스 방식이 SVG 재렌더 시 불안정하므로 직접 style.fill 조작으로 교체.

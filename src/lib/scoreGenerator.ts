@@ -113,12 +113,12 @@ const DURATION_POOL: Record<Difficulty, number[]> = {
   intermediate_1: [8, 6, 4, 4, 2, 2],
   // L5: L4와 동일 계열 (당김음·타이로 난이도 상승)
   intermediate_2: [8, 6, 4, 4, 2, 2],
-  // L6: 16분·8분 비중↑
-  intermediate_3: [12, 8, 6, 4, 4, 2, 2, 1, 1],
-  // L7–L9: 중급보다 2·4·8 비중 큼, 16·점8 유지
-  advanced_1:     [8, 6, 6, 4, 4, 3, 2, 1],
-  advanced_2:     [8, 6, 6, 4, 4, 3, 2, 1],
-  advanced_3:     [8, 6, 6, 4, 4, 3, 2, 2, 1],
+  // L6: 16분 등장, 4분 비중 유지
+  intermediate_3: [12, 8, 6, 4, 4, 4, 2, 2, 1],
+  // L7–L9: 중급보다 2·4·8 비중 큼, 16·점8 유지, 4분 최소 1회
+  advanced_1:     [8, 6, 6, 4, 4, 4, 3, 2, 1],
+  advanced_2:     [8, 6, 6, 4, 4, 4, 3, 2, 1],
+  advanced_3:     [8, 6, 6, 4, 4, 4, 3, 2, 1],
 };
 
 const CHROMATIC_RESOLUTION: Record<string, PitchName> = {
