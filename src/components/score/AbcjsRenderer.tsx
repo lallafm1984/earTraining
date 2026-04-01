@@ -401,7 +401,7 @@ export default function AbcjsRenderer({
         const synth = new abcjs.synth.CreateSynth();
         synthRef.current = synth;
         await synth.init({ audioContext: audioCtx, visualObj });
-        await synth.prime();
+        const primeResult = await synth.prime();
 
         if (prependMetronome) {
           const metronomeStartTime = prependBasePitch ? 16 * scaleBeatDuration : 0;
@@ -418,9 +418,12 @@ export default function AbcjsRenderer({
         synth.start();
 
         // 재생 종료 시 버튼을 재생으로 복귀
-        let totalDuration = (visualObj as any).getTotalTime ? (visualObj as any).getTotalTime() : 0;
+        // prime() 반환값의 duration이 가장 정확한 실제 재생 시간
+        let totalDuration = (primeResult as any)?.duration ?? 0;
         if (!totalDuration || isNaN(totalDuration)) {
-          // 큰보표에서는 | 개수가 V1+V2로 중복되어 잘못 계산되므로 parseAbcParts로 실제 마디 수 사용
+          totalDuration = (visualObj as any).getTotalTime ? (visualObj as any).getTotalTime() : 0;
+        }
+        if (!totalDuration || isNaN(totalDuration)) {
           const { treble } = parseAbcParts(abcString);
           const measureCount = treble.length;
           totalDuration =
@@ -428,7 +431,7 @@ export default function AbcjsRenderer({
             (prependMetronome ? top * actualBeatDuration : 0) +
             measureCount * top * actualBeatDuration;
         }
-        const endMs = (totalDuration + 0.5) * 1000;
+        const endMs = (totalDuration + 1.0) * 1000;
         playEndTimeoutRef.current = setTimeout(() => {
           playEndTimeoutRef.current = null;
           setIsPlaying(false);
