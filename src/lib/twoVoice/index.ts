@@ -18,8 +18,8 @@ export type {
 export { generateTwoVoiceBass } from './bassGenerator';
 export { validateBass } from './validator';
 
-export { generateTwoVoiceMelody } from './melodyGenerator';
-export type { TwoVoiceMelodyOptions } from './melodyGenerator';
+export { generateTwoVoiceMelody, generateMelody } from './melodyGenerator';
+export type { TwoVoiceMelodyOptions, MelodyGeneratorOptions } from './melodyGenerator';
 
 export {
   validateStrongBeatConsonance,

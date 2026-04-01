@@ -1,7 +1,8 @@
 // ────────────────────────────────────────────────────────────────
-// Two-Voice Melody Generator (상성부)
+// Unified Melody Generator (통합 멜로디 생성기)
+// 1성부(단일 보표) / 2성부(큰보표) 공용.
+// bassNotes가 주어지면 2성부(강박 협화 강제), 없으면 1성부(독립 선율).
 // Spec: temp/ear_training_melody_prompt_v4.md — 레벨 1–9, 강박 협화, 화성단조 처리
-// Rhythm patterns: melodyPatterns.ts (누적 레벨 + 신규/기존 비율).
 // ────────────────────────────────────────────────────────────────
 
 import type { ScoreNote, PitchName, NoteDuration, Accidental } from '../scoreUtils';
@@ -20,6 +21,7 @@ import {
   PITCH_ORDER,
   isForbiddenMelodicInterval,
   getKeySigAlteration,
+  getKeySignatureAccidentalCount,
   SIXTEENTHS_TO_DUR,
   sixteenthsToDuration,
   getTupletNoteDuration,
@@ -38,15 +40,19 @@ import { applyMelodyAccidentals } from './chromaticAccidental';
 // Public interface
 // ────────────────────────────────────────────────────────────────
 
-export interface TwoVoiceMelodyOptions {
+/** @deprecated Use MelodyGeneratorOptions instead */
+export type TwoVoiceMelodyOptions = MelodyGeneratorOptions;
+
+export interface MelodyGeneratorOptions {
   key: string;              // e.g. 'C', 'Am', 'Dm'
   mode: 'major' | 'harmonic_minor';
   timeSig: TimeSignature;
   measures: number;         // total measures including cadence (4, 8, 12, 16)
   melodyLevel: number;      // 1-9
   progression: number[];    // chord progression (scale degree indices)
-  bassNotes: ScoreNote[];   // pre-generated bass (excluding cadence bar)
-  /** Treble staff octave base (default 4). Pass scoreGenerator’s TREBLE_BASE for alignment. */
+  /** Pre-generated bass (excluding cadence bar). 없으면 1성부 모드. */
+  bassNotes?: ScoreNote[];
+  /** Treble staff octave base (default 4). Pass scoreGenerator's TREBLE_BASE for alignment. */
   trebleBaseOctave?: number;
   /**
    * Min/max scale-degree offset (nn) — must match scoreGenerator treble bounds so the
@@ -110,14 +116,19 @@ interface MelodyGenContext {
   baseOctave: number;
   keySignature: string;
   mode: 'major' | 'harmonic_minor';
+  timeSig: TimeSignature;
   constraints: LevelConstraints;
   level: number;
   /** Range limits in nn */
   nnLow: number;
   nnHigh: number;
+  /** 베이스가 존재하면 true (2성부), 없으면 false (1성부) */
+  hasBass: boolean;
+  /** 프레이즈 정점 계획 (lvl>=4, 4마디 프레이즈 단위) */
+  phrasePeaks: { bar: number; peakNn: number }[];
 }
 
-function buildContext(opts: TwoVoiceMelodyOptions): MelodyGenContext {
+function buildContext(opts: MelodyGeneratorOptions): MelodyGenContext {
   const keySignature = opts.mode === 'harmonic_minor'
     ? (opts.key.endsWith('m') ? opts.key : opts.key + 'm')
     : opts.key;
@@ -133,10 +144,35 @@ function buildContext(opts: TwoVoiceMelodyOptions): MelodyGenContext {
   if (opts.melodyNnMax !== undefined) nnHigh = Math.min(nnHigh, opts.melodyNnMax);
   if (nnLow > nnHigh) nnLow = nnHigh;
 
+  const hasBass = !!opts.bassNotes && opts.bassNotes.length > 0;
+  const level = opts.melodyLevel;
+  const effectiveMax = nnHigh;
+
+  // ── 단일 정점 사전 계획 (4마디 프레이즈 단위, lvl>=4) ──
+  const PHRASE_LEN = 4;
+  const phrasePeaks: { bar: number; peakNn: number }[] = [];
+  if (level >= 4) {
+    const loopBars = opts.measures - 1; // 종지 마디 제외
+    const phraseCount = Math.ceil(loopBars / PHRASE_LEN);
+    for (let p = 0; p < phraseCount; p++) {
+      const pStart = p * PHRASE_LEN;
+      const pEnd = Math.min(pStart + PHRASE_LEN - 1, loopBars - 1);
+      const peakBar = pEnd > pStart
+        ? pStart + 1 + Math.floor(Math.random() * Math.max(1, pEnd - pStart))
+        : pStart;
+      const peakNn = Math.min(
+        effectiveMax,
+        Math.floor(effectiveMax * 0.75) + Math.floor(Math.random() * Math.ceil(effectiveMax * 0.25 + 1)),
+      );
+      phrasePeaks.push({ bar: Math.min(peakBar, pEnd), peakNn });
+    }
+  }
+
   return {
     scale, baseOctave, keySignature, mode: opts.mode,
-    constraints, level: opts.melodyLevel,
+    timeSig: opts.timeSig, constraints, level,
     nnLow, nnHigh,
+    hasBass, phrasePeaks,
   };
 }
 
@@ -411,6 +447,172 @@ function selectWeakBeatPitch(
 }
 
 // ────────────────────────────────────────────────────────────────
+// 1-voice pitch selection (no bass constraint)
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * 1성부 모드: 베이스 없이 순수 interval 기반 음 선택.
+ * scoreGenerator.ts의 인라인 로직을 함수로 추출.
+ */
+function selectPitchWithoutBass(
+  prevNN: number,
+  ctx: MelodyGenContext,
+  prevDir: number,
+  prevInterval: number,
+  consecutiveSameDir: number,
+  chordDegree: number,
+  barPos: number,
+  beatSize: number,
+): number {
+  let interval: number;
+
+  // 음역 경계 우선
+  if (prevNN >= ctx.nnHigh) {
+    interval = rand([-1, -2]);
+  } else if (prevNN <= ctx.nnLow) {
+    interval = rand([1, 2]);
+  } else if (Math.abs(prevInterval) >= 3) {
+    // 도약 후 반대방향 순차진행
+    if (ctx.level >= 7) {
+      interval = prevDir > 0 ? rand([-1, -2]) : rand([1, 2]);
+    } else {
+      interval = prevDir > 0 ? -1 : 1;
+    }
+  } else if (consecutiveSameDir >= 3 && prevDir !== 0) {
+    // 윤곽 다양성: 같은 방향 3회 연속 후 반대 방향 강제
+    interval = prevDir > 0 ? rand([-1, -2]) : rand([1, 2]);
+  } else if (Math.random() < ctx.constraints.stepwiseRatio) {
+    interval = rand([1, -1]);
+  } else {
+    const maxLeap = ctx.constraints.maxLeap;
+    const leapOptions: number[] = [];
+    for (let l = 2; l <= Math.min(maxLeap, ctx.constraints.maxInterval); l++) {
+      leapOptions.push(l, -l);
+    }
+    interval = leapOptions.length > 0 ? rand(leapOptions) : rand([1, -1]);
+  }
+
+  let nn = prevNN + interval;
+  nn = clampNN(nn, ctx);
+
+  // 화음톤 스냅
+  const isDownbeat = barPos % beatSize === 0;
+  const rangeFactor = (ctx.nnHigh - ctx.nnLow) <= 8 ? 0.6 : 1.0;
+  const oddMeterFactor = /^[57]\/8$/.test(ctx.timeSig) ? 0.55 : 1.0;
+  const snapChance = (isDownbeat
+    ? ctx.constraints.chordSnapStrong
+    : ctx.constraints.chordSnapWeak) * rangeFactor;
+  if (Math.random() < snapChance) {
+    nn = snapNnTowardChordTones(nn, prevNN, chordDegree, ctx);
+    nn = clampNN(nn, ctx);
+  }
+
+  return nn;
+}
+
+// ────────────────────────────────────────────────────────────────
+// 1-voice inline chromatic accidentals (lvl 3-7)
+// ────────────────────────────────────────────────────────────────
+
+const CHROMATIC_RESOLUTION: Record<string, PitchName> = {
+  'C': 'D', 'D': 'E', 'E': 'F', 'F': 'G', 'G': 'A', 'A': 'B', 'B': 'C',
+};
+
+function pickChromaticAccidental(keySignature: string, pitch: PitchName, level: number): Accidental {
+  const keyAlt = getKeySigAlteration(keySignature, pitch);
+  const r = Math.random();
+  if (keyAlt === '#') {
+    return r < 0.55 ? 'n' : 'b';
+  }
+  if (keyAlt === 'b') {
+    return r < 0.55 ? 'n' : '#';
+  }
+  const canSharp = pitch !== 'E' && pitch !== 'B';
+  const canFlat  = pitch !== 'C' && pitch !== 'F';
+  if (level >= 5) {
+    if (canSharp && canFlat) return r < 0.5 ? '#' : 'b';
+    if (canSharp) return '#';
+    if (canFlat)  return 'b';
+    return 'n';
+  }
+  return canSharp ? '#' : 'b';
+}
+
+// ────────────────────────────────────────────────────────────────
+// 1-voice tendency resolution (lvl 4+)
+// ────────────────────────────────────────────────────────────────
+
+function applyTendencyResolution(
+  nn: number, prevNn: number, isCadenceContext: boolean,
+): number {
+  const prevDeg = ((prevNn % 7) + 7) % 7;
+  if (prevDeg === 6) {
+    const target = prevNn + 1;
+    if (isCadenceContext || Math.random() < 0.85) return target;
+  }
+  if (prevDeg === 3) {
+    if (Math.random() < 0.60) return prevNn - 1;
+  }
+  return nn;
+}
+
+// ────────────────────────────────────────────────────────────────
+// 1-voice phrase peak enforcement (lvl 4+)
+// ────────────────────────────────────────────────────────────────
+
+function enforcePeakNote(
+  nn: number, bar: number, barPos: number,
+  peak: { bar: number; peakNn: number },
+): number {
+  const atPeak = bar === peak.bar && barPos === 0;
+  if (atPeak) {
+    return Math.max(nn, peak.peakNn);
+  }
+  if (nn >= peak.peakNn) {
+    return peak.peakNn - 1 - Math.floor(Math.random() * 2);
+  }
+  return nn;
+}
+
+// ────────────────────────────────────────────────────────────────
+// 1-voice triad chain validation (lvl 7+)
+// ────────────────────────────────────────────────────────────────
+
+function isTriadSubset(degrees: number[]): boolean {
+  const triads = [
+    [0, 2, 4], [1, 3, 5], [2, 4, 6],
+    [0, 3, 5], [1, 4, 6], [0, 2, 5], [1, 3, 6],
+  ];
+  const degSet = new Set(degrees.map(d => ((d % 7) + 7) % 7));
+  return triads.some(t => {
+    const ts = new Set(t);
+    for (const d of degSet) {
+      if (!ts.has(d)) return false;
+    }
+    return true;
+  });
+}
+
+function checkConsecutiveLeapTriad(
+  nn: number, prevNn: number, interval: number,
+  leapNotes: number[],
+): { nn: number; isTriadChain: boolean; leapNotes: number[] } {
+  const isLeap = Math.abs(interval) >= 2;
+  if (!isLeap) {
+    return { nn, isTriadChain: false, leapNotes: [nn] };
+  }
+  const newLeap = leapNotes.length === 0 ? [prevNn, nn] : [...leapNotes, nn];
+  if (newLeap.length >= 3) {
+    if (isTriadSubset(newLeap)) {
+      return { nn, isTriadChain: true, leapNotes: newLeap };
+    }
+    const step = interval > 0 ? 1 : -1;
+    return { nn: prevNn + step, isTriadChain: false, leapNotes: [prevNn + step] };
+  }
+  return { nn, isTriadChain: false, leapNotes: newLeap };
+}
+
+// ────────────────────────────────────────────────────────────────
 // Harmonic minor special handling
 // ────────────────────────────────────────────────────────────────
 
@@ -586,15 +788,21 @@ interface BarRhythmCell {
   nns: number[];
 }
 
-export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[] {
+/** @deprecated Use generateMelody instead */
+export const generateTwoVoiceMelody = generateMelody;
+
+export function generateMelody(opts: MelodyGeneratorOptions): ScoreNote[] {
   const ctx = buildContext(opts);
-  const { timeSig, measures, melodyLevel, progression, bassNotes } = opts;
+  const { timeSig, measures, melodyLevel, progression } = opts;
+  const bassNotes = opts.bassNotes ?? [];
 
   const sixteenthsPerBar = getSixteenthsPerBar(timeSig);
   const barCount = measures - 1; // exclude cadence bar
   const strong16 = strongBeatOffsetsSixteenths0(timeSig);
 
-  const bassMaps = buildBassSoundingMap(bassNotes, barCount, sixteenthsPerBar, ctx.keySignature);
+  const bassMaps = ctx.hasBass
+    ? buildBassSoundingMap(bassNotes, barCount, sixteenthsPerBar, ctx.keySignature)
+    : null;
 
   const allNotes: ScoreNote[] = [];
 
@@ -607,26 +815,48 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
   let lastTrebleDur: number | undefined;
   const beatSize = trebleBeatSizeSixteenths(timeSig);
   const tieProbEff = rhythmParams.tieProb * (/^[57]\/8$/.test(timeSig) ? 0.5 : 1.0);
+  const oddMeterFactor = /^[57]\/8$/.test(timeSig) ? 0.55 : 1.0;
+
+  // ── 1성부 인라인 임시표 상태 (lvl 3-7, !hasBass) ──
+  let pendingResolution: PitchName | null = null;
+  const keyAccCount = getKeySignatureAccidentalCount(ctx.keySignature);
+  const measureDensity = Math.max(0.62, Math.min(1.75, 0.48 + measures * 0.092));
+  const keyDensityBase = keyAccCount * 0.6 + (keyAccCount >= 5 ? 1 : 0);
+  const chromaticProb = (!ctx.hasBass && melodyLevel >= 3 && melodyLevel < 8)
+    ? Math.min(0.48, 0.15 + keyAccCount * 0.017 * measureDensity + (melodyLevel >= 4 ? 0.035 * Math.min(1.25, 0.75 + measures * 0.04) : 0))
+    : 0;
+  let accidentalBudget = (!ctx.hasBass && melodyLevel >= 3 && melodyLevel < 8)
+    ? 2 + Math.floor(Math.random() * 3) + Math.min(8, Math.floor(keyDensityBase * measureDensity))
+    : 0;
 
   let prevNN = 0;
   let stepwiseCount = 0;
   let totalMoves = 0;
   let isFirstNote = true;
 
+  // ── 1성부 전용 상태 ──
+  let prevDir = 0;
+  let prevInterval = 0;
+  let consecutiveSameDir = 0;
+  let prevFinalNn = -1;
+  let consecutiveSame = 0;
+  let consecutiveLeapNotes: number[] = [];
+
+  const PHRASE_LEN = 4;
+
   for (let bar = 0; bar < barCount; bar++) {
-    const bassMap = bassMaps[bar] || new Map<number, number>();
-    const bassStartMidi = (() => {
-      const a = bassMap.get(0);
-      if (a !== undefined) return a;
-      for (const v of bassMap.values()) return v;
-      return 48;
-    })();
-    const chordDegree = inferChordDegreeFromBassMidi(
-      bassStartMidi,
-      ctx.scale,
-      ctx.keySignature,
-      progression[bar] ?? 0,
-    );
+    const bassMap = bassMaps ? (bassMaps[bar] || new Map<number, number>()) : new Map<number, number>();
+    const bassStartMidi = ctx.hasBass
+      ? (() => {
+          const a = bassMap.get(0);
+          if (a !== undefined) return a;
+          for (const v of bassMap.values()) return v;
+          return 48;
+        })()
+      : 0;
+    const chordDegree = ctx.hasBass
+      ? inferChordDegreeFromBassMidi(bassStartMidi, ctx.scale, ctx.keySignature, progression[bar] ?? 0)
+      : ((progression[bar] ?? 0) % 7 + 7) % 7;
 
     const rhythm = fillRhythm(sixteenthsPerBar, pool, {
       timeSignature: timeSig,
@@ -644,18 +874,40 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
 
     for (let i = 0; i < rhythm.length; i++) {
       const dur = rhythm[i];
-      const bassMidi = bassMap.get(barPos) ?? bassMap.get(0) ?? 48;
+      const bassMidi = ctx.hasBass ? (bassMap.get(barPos) ?? bassMap.get(0) ?? 48) : 0;
       const isStrongBeat = strong16.has(barPos);
 
       let nn: number;
 
+      // ── 1성부: pendingResolution 처리 ──
+      if (!ctx.hasBass && ctx.level >= 3 && pendingResolution) {
+        const rp = pendingResolution; pendingResolution = null;
+        const degIdx = ctx.scale.indexOf(rp);
+        if (degIdx >= 0) {
+          nn = Math.round(prevNN / 7) * 7 + degIdx;
+          nn = clampNN(nn, ctx);
+        } else {
+          nn = prevNN;
+        }
+        barCells.push({ dur16: dur, nns: [nn] });
+        prevFinalNn = nn; consecutiveSame = 0;
+        prevNN = nn;
+        barPos += dur;
+        if (!isFirstNote) { totalMoves++; if (Math.abs(nn - prevNN) <= 1) stepwiseCount++; }
+        else isFirstNote = false;
+        prevInterval = 0;
+        continue;
+      }
+
       if (isFirstNote) {
-        nn = 0;
-        // 첫 음도 베이스와 협화 확인
-        if (!isConsonant(nnToMidiCtx(nn, ctx), bassMidi)) {
+        // 시작: 으뜸3화음 위주
+        const startCandidates = [0, 2, 4, 5, 7].filter(n => n >= ctx.nnLow && n <= ctx.nnHigh);
+        nn = startCandidates.length > 0 ? rand(startCandidates) : 0;
+        if (ctx.hasBass && !isConsonant(nnToMidiCtx(nn, ctx), bassMidi)) {
           nn = selectConsonantPitch(bassMidi, 0, chordDegree, ctx);
         }
       } else if (bar === barCount - 1 && i === rhythm.length - 1) {
+        // 마지막 음: approach note
         const approachCandidates = [1, -1, 6];
         let bestApproach = 1;
         let bestDist = Infinity;
@@ -663,8 +915,7 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
           for (let octOff = -1; octOff <= 1; octOff++) {
             const cnn = c + octOff * 7;
             if (!isInRange(cnn, ctx)) continue;
-            const cMidi = nnToMidiCtx(cnn, ctx);
-            if (!isConsonant(cMidi, bassMidi)) continue;
+            if (ctx.hasBass && !isConsonant(nnToMidiCtx(cnn, ctx), bassMidi)) continue;
             const dist = Math.abs(cnn - prevNN);
             if (dist < bestDist) {
               bestDist = dist;
@@ -673,17 +924,53 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
           }
         }
         nn = bestApproach;
-      } else if (isStrongBeat) {
-        nn = selectConsonantPitch(bassMidi, prevNN, chordDegree, ctx);
-        const oddWeak = timeSig === '9/8' || timeSig === '12/8' ? 0.92 : 1;
-        if (Math.random() < ctx.constraints.chordSnapStrong * 0.35 * oddWeak) {
-          nn = snapNnTowardChordTones(nn, prevNN, chordDegree, ctx);
-          if (!isConsonant(nnToMidiCtx(nn, ctx), bassMidi)) {
-            nn = selectConsonantPitch(bassMidi, prevNN, chordDegree, ctx);
+      } else if (ctx.hasBass) {
+        // ── 2성부 모드: 베이스 협화 기반 ──
+        if (isStrongBeat) {
+          nn = selectConsonantPitch(bassMidi, prevNN, chordDegree, ctx);
+          const oddWeak = timeSig === '9/8' || timeSig === '12/8' ? 0.92 : 1;
+          if (Math.random() < ctx.constraints.chordSnapStrong * 0.35 * oddWeak) {
+            nn = snapNnTowardChordTones(nn, prevNN, chordDegree, ctx);
+            if (!isConsonant(nnToMidiCtx(nn, ctx), bassMidi)) {
+              nn = selectConsonantPitch(bassMidi, prevNN, chordDegree, ctx);
+            }
           }
+        } else {
+          nn = selectWeakBeatPitch(bassMidi, prevNN, ctx, stepwiseCount, totalMoves, chordDegree);
         }
       } else {
-        nn = selectWeakBeatPitch(bassMidi, prevNN, ctx, stepwiseCount, totalMoves, chordDegree);
+        // ── 1성부 모드: interval 기반 ──
+        nn = selectPitchWithoutBass(prevNN, ctx, prevDir, prevInterval, consecutiveSameDir, chordDegree, barPos, beatSize);
+
+        // 금지 음정 보정
+        const semiDist = Math.abs(nnToMidiCtx(nn, ctx) - nnToMidiCtx(prevNN, ctx));
+        const nnDist = Math.abs(nn - prevNN);
+        if (isForbiddenMelodicInterval(semiDist, nnDist)) {
+          const dir = nn > prevNN ? 1 : -1;
+          nn = prevNN + dir;
+          nn = clampNN(nn, ctx);
+        }
+
+        // 트라이어드 체인 검증 (lvl 7+)
+        if (ctx.level >= 7) {
+          const leapResult = checkConsecutiveLeapTriad(nn, prevNN, nn - prevNN, consecutiveLeapNotes);
+          nn = leapResult.nn;
+          consecutiveLeapNotes = leapResult.leapNotes;
+        } else {
+          if (Math.abs(nn - prevNN) >= 2) {
+            if (consecutiveLeapNotes.length === 0) consecutiveLeapNotes = [prevNN, nn];
+            else consecutiveLeapNotes.push(nn);
+          } else {
+            consecutiveLeapNotes = [nn];
+          }
+        }
+
+        // 경향음 해결 (lvl 4+)
+        if (ctx.level >= 4) {
+          const isCadence = bar === barCount - 2 && i >= rhythm.length - 2;
+          nn = applyTendencyResolution(nn, prevNN, isCadence);
+          nn = clampNN(nn, ctx);
+        }
       }
 
       if (!isFirstNote) {
@@ -693,14 +980,13 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
         isFirstNote = false;
       }
 
+      // maxLeap 제한
       let leapSize = Math.abs(nn - prevNN);
       if (leapSize > ctx.constraints.maxLeap) {
         const dir = nn > prevNN ? 1 : -1;
         nn = prevNN + dir * ctx.constraints.maxLeap;
         nn = clampNN(nn, ctx);
-        // maxLeap 클램프 후 불협화 발생 시 재보정
-        if (isStrongBeat && !isConsonant(nnToMidiCtx(nn, ctx), bassMidi)) {
-          // ±1~3 스케일도수 탐색
+        if (ctx.hasBass && isStrongBeat && !isConsonant(nnToMidiCtx(nn, ctx), bassMidi)) {
           for (const shift of [1, -1, 2, -2, 3, -3]) {
             const cand = nn + shift;
             if (!isInRange(cand, ctx)) continue;
@@ -710,6 +996,41 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
         }
       }
 
+      // ── 정점 강제 (lvl 4+) ──
+      if (ctx.phrasePeaks.length > 0 && !isFirstNote) {
+        const phraseIdx = Math.min(Math.floor(bar / PHRASE_LEN), ctx.phrasePeaks.length - 1);
+        nn = enforcePeakNote(nn, bar, barPos, ctx.phrasePeaks[phraseIdx]);
+        nn = clampNN(nn, ctx);
+      }
+
+      // ── 연속 반복음 방지 ──
+      if (!isFirstNote) {
+        if (nn === prevFinalNn) {
+          consecutiveSame++;
+          if (consecutiveSame >= 1) {
+            const nudge = prevDir > 0 ? -1 : 1;
+            nn = clampNN(nn + nudge, ctx);
+            if (nn === prevFinalNn) {
+              nn = clampNN(nn - nudge * 2, ctx);
+            }
+            consecutiveSame = 0;
+          }
+        } else {
+          consecutiveSame = 0;
+        }
+        prevFinalNn = nn;
+
+        // 방향 추적
+        const newDir = nn > prevNN ? 1 : nn < prevNN ? -1 : 0;
+        prevInterval = nn - prevNN;
+        if (newDir !== 0 && newDir === prevDir) consecutiveSameDir++;
+        else if (newDir !== 0) consecutiveSameDir = 1;
+        prevDir = newDir !== 0 ? newDir : prevDir;
+        if (nn >= ctx.nnHigh) prevDir = -1;
+        if (nn <= ctx.nnLow) prevDir = 1;
+      }
+
+      // 셋잇단
       const useTriplet =
         tripletBudget > 0 &&
         dur === 4 &&
@@ -722,6 +1043,7 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
         barCells.push({ dur16: 4, nns: [...tripNNs] });
         tripletBudget--;
         prevNN = tripNNs[2];
+        prevFinalNn = tripNNs[2];
         for (let t = 0; t < 2; t++) {
           totalMoves++;
           if (Math.abs(tripNNs[t + 1] - tripNNs[t]) <= 1) stepwiseCount++;
@@ -734,6 +1056,7 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
       barPos += dur;
     }
 
+    // ── 마디별 후처리 ──
     const flatBar = barCells.flatMap(c => c.nns);
     if (flatBar.length > 1) {
       limitConsecutiveSame(flatBar, ctx);
@@ -749,6 +1072,7 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
       }
     }
 
+    // ── ScoreNote 변환 ──
     let cellIdx = 0;
     let emitBarPos = 0;
     for (const cell of barCells) {
@@ -763,7 +1087,6 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
         first.tuplet = '3';
         first.tupletSpan = spanDur;
         first.tupletNoteDur = tnd;
-        // 2·3번째 음에도 tupletNoteDur 설정: 합계 = spanSixteenths (4)
         const rem = spanSixteenths - tnd;              // 2
         const perRem = Math.floor(rem / 2);            // 1
         const second = nnToScoreNote(cell.nns[1], innerDur, ctx);
@@ -776,6 +1099,26 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
       } else {
         const nn = cell.nns[0];
         const { pitch, octave } = noteNumToNote(nn, ctx.scale, ctx.baseOctave);
+
+        // ── 1성부 인라인 임시표 (lvl 3-7) ──
+        if (!ctx.hasBass && accidentalBudget > 0 && chromaticProb > 0 &&
+            cellIdx < barCells.length - 1 && Math.random() < chromaticProb) {
+          if (ctx.scale.includes(pitch)) {
+            const acc = pickChromaticAccidental(ctx.keySignature, pitch, ctx.level);
+            allNotes.push(nnToScoreNote(nn, durLabel, ctx, acc));
+            if (acc === '#' || acc === 'n') {
+              pendingResolution = CHROMATIC_RESOLUTION[pitch] ?? null;
+            } else {
+              pendingResolution = pitch;
+            }
+            accidentalBudget--;
+            emitBarPos += cell.dur16;
+            cellIdx++;
+            continue;
+          }
+        }
+
+        // 타이 삽입
         const prevMel = lastNonRestMelody(allNotes);
         if (
           prevMel &&
@@ -794,21 +1137,22 @@ export function generateTwoVoiceMelody(opts: TwoVoiceMelodyOptions): ScoreNote[]
     }
   }
 
+  // ── 전체 후처리 ──
   const allPitchedNNs = extractPitchedNNs(allNotes, ctx);
   if (allPitchedNNs.length > 2) {
     applyGapFill(allPitchedNNs, ctx);
     if (ctx.mode === 'harmonic_minor') {
       resolveLeadingTones(allPitchedNNs, ctx);
     }
-    // 전체 시퀀스에서 금지 음정 재검사 (마디 경계 + gap-fill/이끔음 재도입 보정)
     fixForbiddenIntervals(allPitchedNNs, ctx);
     writePitchedNNsBack(allNotes, allPitchedNNs, ctx);
   }
 
   // ── 임시표 삽입 (고급 2단계 이상: 알고리즘 기반) ──
   if (ctx.level >= 8) {
+    const bassMapsForAccidentals = bassMaps ?? [];
     applyMelodyAccidentals(
-      allNotes, bassMaps, ctx.keySignature, ctx.mode,
+      allNotes, bassMapsForAccidentals, ctx.keySignature, ctx.mode,
       ctx.level, sixteenthsPerBar, strong16,
     );
   }

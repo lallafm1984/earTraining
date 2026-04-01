@@ -10,7 +10,7 @@ import type { ScoreNote } from '../scoreUtils';
 import { getScaleDegrees, getBassBaseOctave } from '../scoreUtils';
 import { generateBassWithRetry } from './bassWithRetry';
 import { bassLineToScoreNotes } from './bassToScore';
-import { generateTwoVoiceMelody, type TwoVoiceMelodyOptions } from './melodyGenerator';
+import { generateMelody, type MelodyGeneratorOptions } from './melodyGenerator';
 
 export interface TwoVoiceStackInput {
   keySignature: string;
@@ -69,7 +69,7 @@ export function generateTwoVoiceStack(input: TwoVoiceStackInput): TwoVoiceStackR
   const bassBase = getBassBaseOctave(scale);
   const bassScoreNotes = bassLineToScoreNotes(bassLine, scale, bassBase, keySignature);
 
-  const melodyOpts: TwoVoiceMelodyOptions = {
+  const melodyOpts: MelodyGeneratorOptions = {
     key: keySignature,
     mode,
     timeSig,
@@ -82,7 +82,7 @@ export function generateTwoVoiceStack(input: TwoVoiceStackInput): TwoVoiceStackR
     melodyNnMax,
   };
 
-  const trebleScoreNotes = generateTwoVoiceMelody(melodyOpts);
+  const trebleScoreNotes = generateMelody(melodyOpts);
 
   return { bassScoreNotes, trebleScoreNotes };
 }
