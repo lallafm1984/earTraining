@@ -114,6 +114,8 @@ export function fillRhythm(
     minDur?: number;
     dottedProb?: number;
     allowTies?: boolean;
+    /** 마디 내 최대 음표 수. 초과 시 인접 짧은 음표를 병합 */
+    maxNotes?: number;
   },
 ): number[] {
   const sorted = [...pool].sort((a, b) => b - a);
@@ -245,5 +247,25 @@ export function fillRhythm(
       rem -= d;
     }
   }
+  // ── maxNotes 제한: 초과 시 인접한 짧은 음표 쌍을 병합 ──
+  const maxNotes = opts?.maxNotes;
+  if (maxNotes && result.length > maxNotes) {
+    while (result.length > maxNotes) {
+      // 가장 짧은 인접 쌍을 찾아 병합
+      let bestIdx = -1;
+      let bestSum = Infinity;
+      for (let i = 0; i < result.length - 1; i++) {
+        const sum = result[i] + result[i + 1];
+        // 병합 결과가 유효한 음가여야 함
+        if (SIXTEENTHS_TO_DUR[sum] && sum < bestSum) {
+          bestSum = sum;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx < 0) break; // 병합 가능한 쌍 없음
+      result.splice(bestIdx, 2, bestSum);
+    }
+  }
+
   return variateSixteenthNoteRuns(result);
 }

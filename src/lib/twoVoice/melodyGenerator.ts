@@ -818,12 +818,18 @@ export function generateMelody(opts: MelodyGeneratorOptions): ScoreNote[] {
       ? inferChordDegreeFromBassMidi(bassStartMidi, ctx.scale, ctx.keySignature, progression[bar] ?? 0)
       : ((progression[bar] ?? 0) % 7 + 7) % 7;
 
+    // 중급3(lvl6) 이상: 마디당 최대 음표 수 제한으로 과밀 방지
+    // 4/4(16) → 7개, 3/4(12) → 5개, 6/8(12) → 5개, 비례 계산
+    const maxNotesForBar = melodyLevel >= 6
+      ? Math.max(4, Math.floor(sixteenthsPerBar * 0.44))
+      : undefined;
     const rhythm = fillRhythm(sixteenthsPerBar, pool, {
       timeSignature: timeSig,
       lastDur: lastTrebleDur,
       syncopationProb: rhythmParams.syncopationProb,
       dottedProb: rhythmParams.dottedProb,
       allowTies: melodyLevel >= 5,
+      maxNotes: maxNotesForBar,
     });
     if (rhythm.length > 0) {
       lastTrebleDur = rhythm[rhythm.length - 1];
