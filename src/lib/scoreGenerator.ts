@@ -32,7 +32,7 @@ import {
 } from './scoreUtils';
 
 import type { BassLevel, TimeSignature as TVTimeSignature } from './twoVoice';
-import { applyCounterpointCorrections, generateTwoVoiceStack, generateMelody } from './twoVoice';
+import { applyCounterpointCorrections, generateTwoVoiceStack } from './twoVoice';
 import { applyMelodyAccidentals } from './twoVoice/chromaticAccidental';
 import { fillRhythm } from './trebleRhythmFill';
 
@@ -1108,57 +1108,36 @@ export function generateScore(opts: GeneratorOptions): GeneratedScore {
   // → octave 4 이상만 사용하도록 최소 nn 설정 (Am:2→C4, Gm:3→C4, Bm:1→C#4)
   const trebleRangeMin = (useGrandStaff && TREBLE_BASE <= 3) ? (7 - rootIdx) : 0;
 
-  // ── Step A: 새 2성부 베이스 선생성 (bassDifficulty가 지정된 경우) ──
-  let newBassScoreNotes: ScoreNote[] | null = null;
-  const useNewBassModule = useGrandStaff && !!bassDifficulty;
-  if (useNewBassModule) {
-    const bassLevel = mapBassDifficultyToLevel(bassDifficulty!);
-    const tvTimeSig = timeSignature as TVTimeSignature;
-    const tvMeasures = ([4, 8, 12, 16] as const).find(m => m >= measures - 1) ?? 16;
-    const stack = generateTwoVoiceStack({
-      keySignature,
-      mode: isMinor ? 'harmonic_minor' : 'major',
-      timeSig: tvTimeSig,
-      measures,
-      tvMeasures,
-      bassLevel,
-      melodyLevel: lvl,
-      progression,
-      trebleBaseOctave: TREBLE_BASE,
-      melodyNnMin: Math.max(trebleRangeMin, 0),
-      melodyNnMax: effectiveTrebleMax,
-    });
-    newBassScoreNotes = stack.bassScoreNotes;
-    trebleNotes.push(...stack.trebleScoreNotes);
-  }
+  // ── Step A: 베이스 선생성 + 멜로디 생성 (1성부/2성부 공통) ──
+  // 1성부도 2성부와 동일하게 베이스를 내부 생성하여 멜로디 품질 향상 후 베이스 제거
+  const bassLevel: BassLevel = bassDifficulty
+    ? mapBassDifficultyToLevel(bassDifficulty)
+    : 1; // 1성부: 기본 베이스(온음표 루트)로 화성 컨텍스트 제공
+  const tvTimeSig = timeSignature as TVTimeSignature;
+  const tvMeasures = ([4, 8, 12, 16] as const).find(m => m >= measures - 1) ?? 16;
+  const stack = generateTwoVoiceStack({
+    keySignature,
+    mode: isMinor ? 'harmonic_minor' : 'major',
+    timeSig: tvTimeSig,
+    measures,
+    tvMeasures,
+    bassLevel,
+    melodyLevel: lvl,
+    progression,
+    trebleBaseOctave: TREBLE_BASE,
+    melodyNnMin: Math.max(trebleRangeMin, 0),
+    melodyNnMax: effectiveTrebleMax,
+  });
+  const internalBassNotes = stack.bassScoreNotes;
+  trebleNotes.push(...stack.trebleScoreNotes);
 
-  const useDedicatedTwoVoiceMelody =
-    useNewBassModule && !!newBassScoreNotes && newBassScoreNotes.length > 0;
-
-  // ── 1성부 멜로디: 통합 생성기 호출 ──
-  if (!useDedicatedTwoVoiceMelody) {
-    const melodyNotes = generateMelody({
-      key: keySignature,
-      mode: isMinor ? 'harmonic_minor' : 'major',
-      timeSig: timeSignature as TVTimeSignature,
-      measures,
-      melodyLevel: lvl,
-      progression,
-      trebleBaseOctave: TREBLE_BASE,
-      melodyNnMin: Math.max(trebleRangeMin, 0),
-      melodyNnMax: effectiveTrebleMax,
-      // bassNotes 생략 → 1성부 모드
-    });
-    trebleNotes.push(...melodyNotes);
-  }
-
-  // ── 새 베이스 모듈: 선생성된 베이스를 bassNotes에 할당 ──
-  if (useNewBassModule && newBassScoreNotes) {
-    bassNotes.push(...newBassScoreNotes);
+  // ── 2성부: 베이스를 최종 출력에 포함 ──
+  if (useGrandStaff && internalBassNotes.length > 0) {
+    bassNotes.push(...internalBassNotes);
   }
 
   // ── 1성부 후처리: 임시표 정리 + 삼전음 보정 ──
-  if (!useDedicatedTwoVoiceMelody) {
+  if (!useGrandStaff) {
     cleanupBrokenAccidentals(trebleNotes, keySignature);
     fixTritoneleaps(trebleNotes, scale, TREBLE_BASE, keySignature);
   }
@@ -1179,9 +1158,8 @@ export function generateScore(opts: GeneratorOptions): GeneratedScore {
   trebleNotes.push(...cadence.treble);
   bassNotes.push(...cadence.bass);
 
-  // ── Step C: 대위법 후처리 (새 베이스 모듈 사용 시) ──
-  if (useNewBassModule) {
-    const tvTimeSig = timeSignature as TVTimeSignature;
+  // ── Step C: 대위법 후처리 (2성부 사용 시) ──
+  if (useGrandStaff) {
     applyCounterpointCorrections(trebleNotes, bassNotes, tvTimeSig, keySignature, lvl);
 
     // ── Step C-1.5: 임시표 정리 + 삼전음 보정 (안전망 이전) ──
@@ -1281,9 +1259,8 @@ export function generateScore(opts: GeneratorOptions): GeneratedScore {
   }
 
   // ── Step C-3: 안전망 후 병진행 재보정 ──
-  if (useNewBassModule) {
-    const tvTimeSig2 = timeSignature as TVTimeSignature;
-    applyCounterpointCorrections(trebleNotes, bassNotes, tvTimeSig2, keySignature, lvl);
+  if (useGrandStaff) {
+    applyCounterpointCorrections(trebleNotes, bassNotes, tvTimeSig, keySignature, lvl);
 
     // ── Step C-4: 최종 임시표 정리 (모든 보정 완료 후) ──
     cleanupBrokenAccidentals(trebleNotes, keySignature, bassNotes);
@@ -1325,7 +1302,7 @@ export function generateScore(opts: GeneratorOptions): GeneratedScore {
     fixMinorCrossRelation(finalTreble, finalBass, scale, minorSeventhDeg, minorLeadingAcc, BASS_BASE, keySignature, sixteenthsPerBar);
   }
 
-  if (useNewBassModule) {
+  if (useGrandStaff) {
     forceGrandStaffFinalTonic(finalTreble, finalBass, scale, TREBLE_BASE, BASS_BASE);
   }
 
