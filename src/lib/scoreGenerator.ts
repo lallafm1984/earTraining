@@ -1372,8 +1372,8 @@ export function generateScore(opts: GeneratorOptions): GeneratedScore {
         }
       }
 
-      // ── 셋잇단음표 삽입 ──
-      if (tripletBudget > 0 && dur === 4 && lvl >= 4 && barPos % (beatSize * 2) === 0) {
+      // ── 셋잇단음표 삽입 (첫 마디 제외) ──
+      if (tripletBudget > 0 && dur === 4 && lvl >= 4 && bar > 0 && barPos % (beatSize * 2) === 0) {
         const tripResult = tryInsertTriplet(trebleNotes, (k) => {
           // 경계 근처에서 같은 방향 이동 시 반전 — 셋잇단 내 동일음 반복 방지
           let delta = rand([1, -1, 2, -2]);
