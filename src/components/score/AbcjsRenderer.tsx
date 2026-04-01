@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import abcjs from 'abcjs';
 import 'abcjs/abcjs-audio.css';
 import { Play, Square, Volume2 } from 'lucide-react';
+import { generateAbcScaleNotes } from '@/lib/scoreUtils';
 
 interface AbcjsRendererProps {
   abcString: string;
@@ -58,22 +59,6 @@ function rebuildSegmentAbc(header: string, isGrand: boolean, treble: string[], b
   );
 }
 
-const SCALE_NOTES: Record<string, string[]> = {
-  'C':   ['C','D','E','F','G','A','B','c'],
-  'G':   ['G','A','B','c','d','e','f','g'],
-  'D':   ['D','E','F','G','A','B','c','d'],
-  'A':   ['A,','B,','C','D','E','F','G','A'],
-  'F':   ['F','G','A','B','c','d','e','f'],
-  'Bb':  ['B,','C','D','E','F','G','A','B'],
-  'Eb':  ['E','F','G','A','B','c','d','e'],
-  'Am':  ['A,','B,','C','D','E','F','G','A'],
-  'Em':  ['E','F','G','A','B','c','d','e'],
-  'Bm':  ['B,','C','D','E','F','G','A','B'],
-  'F#m': ['F,','G,','A,','B,','C','D','E','F'],
-  'Dm':  ['D','E','F','G','A','B','c','d'],
-  'Gm':  ['G,','A,','B,','C','D','E','F','G'],
-  'Cm':  ['C','D','E','F','G','A','B','c'],
-};
 
 // ── WAV 인코딩 유틸리티 ─────────────────────────────────────────
 function encodeWav(audioBuffer: AudioBuffer): Blob {
@@ -277,7 +262,7 @@ export default function AbcjsRenderer({
     let scalePrepend = '';
     if (prependBasePitch) {
       const m = multiplier;
-      const ascending = SCALE_NOTES[keySignature] || SCALE_NOTES['C'];
+      const ascending = generateAbcScaleNotes(keySignature);
       const descending = [...ascending].slice(0, -1).reverse();
       const allNotes = [...ascending, ...descending, 'z'];
 
@@ -528,7 +513,7 @@ export default function AbcjsRenderer({
           .filter(l => l.trim() !== '' && !/^%%staves/.test(l) && !/^%%barsperstaff/.test(l))
           .join('\n');
 
-        const ascending = SCALE_NOTES[keySignature] || SCALE_NOTES['C'];
+        const ascending = generateAbcScaleNotes(keySignature);
         const descending = [...ascending].slice(0, -1).reverse();
         const allNotes = [...ascending, ...descending, 'z'];
         const [topStr, bottomStr] = timeSignature.split('/');
@@ -749,7 +734,7 @@ export default function AbcjsRenderer({
           .split('\n')
           .filter(l => l.trim() !== '' && !/^%%staves/.test(l) && !/^%%barsperstaff/.test(l))
           .join('\n');
-        const ascending = SCALE_NOTES[keySignature] || SCALE_NOTES['C'];
+        const ascending = generateAbcScaleNotes(keySignature);
         const descending = [...ascending].slice(0, -1).reverse();
         const allNotes = [...ascending, ...descending, 'z'];
         const [topStr, bottomStr] = timeSignature.split('/');
