@@ -225,6 +225,19 @@ function classifyCandidates(
     });
   }
 
+  // ── SEC_DOM (V/IV): 장조 b7 하행 해결 — b7→6 (예: Bb→A in C major) ──
+  // §3.1 SD_IV: altPC가 nextPC보다 1반음 위 + altPC == (root+10)%12
+  if (nextPC >= 0 && ((altPC - nextPC + 12) % 12) === 1 && scalePCs.has(nextPC)) {
+    const b7ofKey = (r + 10) % 12;
+    if (altPC === b7ofKey) {
+      out.push({
+        type: 'SEC_DOM', accidental: acc, altMidi: altM, direction: 'down',
+        compatBass: [r, (r + 5) % 12, b7ofKey],  // I, IV, bVII
+        priority: 1,
+      });
+    }
+  }
+
   // ── STR_M6 (단조 전용): ♮6 → 7(이끔음) 상행 해결 ──────────
   // 선율단음계 상행: b6→♮6→7→1
   if (mode === 'harmonic_minor' && nextPC >= 0) {
@@ -283,6 +296,37 @@ function classifyCandidates(
         type: 'MODAL_MIX', accidental: acc, altMidi: altM, direction: 'up',
         compatBass: [r, (r + 7) % 12, nat3], priority: 2,
       });
+    }
+
+    // §4.4 MODAL_MIX (단조): ♮6 — 유연한 해결 (7, 5, 4도)
+    const mmNat6 = (r + 9) % 12;
+    if (altPC === mmNat6 && !scalePCs.has(mmNat6) && nextPC >= 0) {
+      const lead = (r + 11) % 12;
+      const fifth = (r + 7) % 12;
+      const fourth = (r + 5) % 12;
+      if (nextPC === lead || nextPC === fifth || nextPC === fourth) {
+        out.push({
+          type: 'MODAL_MIX', accidental: acc, altMidi: altM,
+          direction: nextMidi !== null && nextMidi > altM ? 'up' : 'down',
+          compatBass: [(r + 5) % 12, (r + 2) % 12, mmNat6],  // IV, ii, ♮6
+          priority: 3,
+        });
+      }
+    }
+
+    // §4.4 MODAL_MIX (단조): b7 — 해결 (b6, 5, 4도)
+    const mmB7 = (r + 10) % 12;
+    if (altPC === mmB7 && !scalePCs.has(mmB7) && nextPC >= 0) {
+      const b6 = (r + 8) % 12;
+      const fifth2 = (r + 7) % 12;
+      const fourth2 = (r + 5) % 12;
+      if (nextPC === b6 || nextPC === fifth2 || nextPC === fourth2) {
+        out.push({
+          type: 'MODAL_MIX', accidental: acc, altMidi: altM, direction: 'down',
+          compatBass: [(r + 5) % 12, mmB7, (r + 3) % 12],  // IV, bVII, bIII
+          priority: 3,
+        });
+      }
     }
   }
 
@@ -385,7 +429,11 @@ function computeSoftScore(
     } else {
       const iv = ((c.altMidi - bassMidi) % 12 + 12) % 12;
       if (SAFE_INTERVALS.has(iv)) s += 10;
-      else if (CAUTION_INTERVALS.has(iv)) s -= 10;
+      else if (CAUTION_INTERVALS.has(iv)) {
+        // §2.3: 장2도(2반음)는 경과음 맥락에서만 허용 — CHR_PASS 외 큰 감점
+        if (iv === 2 && c.type !== 'CHR_PASS') s -= 25;
+        else s -= 10;
+      }
     }
   }
 
@@ -489,6 +537,9 @@ export function applyMelodyAccidentals(
     // 베이스 MIDI 조회 (1성부 모드: bassMaps가 null이면 베이스 없음)
     const bassMap = bassMaps ? bassMaps[p.bar] : undefined;
     const bassMidi = bassMap?.get(p.pos) ?? bassMap?.get(0) ?? 0;
+    // RULE_H5: 베이스가 비스케일음(임시표)이면 멜로디 임시표 삽입 금지
+    if (bassMidi > 0 && !scalePCs.has(bassMidi % 12)) continue;
+
     const isStrong = strongBeats.has(p.pos);
 
     // 전후 음 MIDI (화성단음계 7음 보정 포함)
@@ -517,6 +568,11 @@ export function applyMelodyAccidentals(
       for (const c of candidates) {
         // 레벨별 허용 유형 필터
         if (!allowed.has(c.type)) continue;
+        // RULE_S1/S2: #→반음 상행 해결, b→반음 하행 해결 (SEC_DOM 제외 — V/IV 등 예외)
+        if (c.type !== 'SEC_DOM') {
+          if (acc === '#' && c.direction === 'down') continue;
+          if (acc === 'b' && c.direction === 'up') continue;
+        }
         // 하드 필터링
         if (failsHardConstraint(c.altMidi, bassMidi, prevMidi, nextMidi, c.type)) continue;
 

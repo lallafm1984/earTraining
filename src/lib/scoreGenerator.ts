@@ -400,7 +400,34 @@ function tryInsertTriplet(
  * 4) 진입 큰도약 (직전 음과 >7반음) → 임시표 제거
  * 5) 삼전음 (직전 또는 다음 음과 6반음) → 임시표 제거
  */
-function cleanupBrokenAccidentals(notes: ScoreNote[], keySignature: string): void {
+function cleanupBrokenAccidentals(
+  notes: ScoreNote[],
+  keySignature: string,
+  bassNotes?: ScoreNote[],
+): void {
+  // §2.3 베이스 협화 검사용: 오프셋 → 베이스 MIDI 매핑
+  const trebleOffsets: number[] = [];
+  { let off = 0; for (const tn of notes) { trebleOffsets.push(off); off += tn.tupletNoteDur ?? durationToSixteenths(tn.duration); } }
+
+  let bassMidiAt: ((off: number) => number) | null = null;
+  if (bassNotes && bassNotes.length > 0) {
+    const bassEntries: { off: number; midi: number }[] = [];
+    let bOff = 0;
+    for (const bn of bassNotes) {
+      if (bn.pitch !== 'rest') {
+        bassEntries.push({ off: bOff, midi: noteToMidiWithKey(bn, keySignature) });
+      }
+      bOff += bn.tupletNoteDur ?? durationToSixteenths(bn.duration);
+    }
+    bassMidiAt = (tOff: number) => {
+      let best = 0;
+      for (const e of bassEntries) {
+        if (e.off <= tOff) best = e.midi; else break;
+      }
+      return best;
+    };
+  }
+
   for (let i = 0; i < notes.length; i++) {
     const n = notes[i];
     if (!n.accidental) continue;
@@ -417,6 +444,19 @@ function cleanupBrokenAccidentals(notes: ScoreNote[], keySignature: string): voi
     }
 
     const curMidi = noteToMidiWithKey(n, keySignature);
+
+    // ── 베이스 불협화 검사: m2(1), M7(11), m9(13) → 임시표 제거 ──
+    if (bassMidiAt) {
+      const bassMidi = bassMidiAt(trebleOffsets[i]);
+      if (bassMidi > 0) {
+        const iv = ((curMidi - bassMidi) % 12 + 12) % 12;
+        const absDist = Math.abs(curMidi - bassMidi);
+        if (iv === 1 || iv === 11 || absDist === 13) {
+          notes[i] = { ...n, accidental: '' as Accidental };
+          continue;
+        }
+      }
+    }
 
     // ── 직전 피치음과의 관계 검사 ──
     let prevMidi = -1;
@@ -1145,7 +1185,7 @@ export function generateScore(opts: GeneratorOptions): GeneratedScore {
     applyCounterpointCorrections(trebleNotes, bassNotes, tvTimeSig, keySignature, lvl);
 
     // ── Step C-1.5: 임시표 정리 + 삼전음 보정 (안전망 이전) ──
-    cleanupBrokenAccidentals(trebleNotes, keySignature);
+    cleanupBrokenAccidentals(trebleNotes, keySignature, bassNotes);
     fixTritoneleaps(trebleNotes, scale, TREBLE_BASE, keySignature);
 
     // ── Step C-2: 최종 강박 불협화 안전망 ──
@@ -1246,7 +1286,7 @@ export function generateScore(opts: GeneratorOptions): GeneratedScore {
     applyCounterpointCorrections(trebleNotes, bassNotes, tvTimeSig2, keySignature, lvl);
 
     // ── Step C-4: 최종 임시표 정리 (모든 보정 완료 후) ──
-    cleanupBrokenAccidentals(trebleNotes, keySignature);
+    cleanupBrokenAccidentals(trebleNotes, keySignature, bassNotes);
   }
 
   // ── 후처리: 내부 쉼표 ──
@@ -1297,7 +1337,7 @@ export function generateScore(opts: GeneratorOptions): GeneratedScore {
   // );
 
   // ── 최종 임시표 안전망: 모든 후처리(쉼표·분할·반복음·대사관계) 완료 후 ──
-  cleanupBrokenAccidentals(finalTreble, keySignature);
+  cleanupBrokenAccidentals(finalTreble, keySignature, finalBass);
 
   return { trebleNotes: finalTreble, bassNotes: finalBass };
 }
