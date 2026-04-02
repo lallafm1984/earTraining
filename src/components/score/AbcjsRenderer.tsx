@@ -40,13 +40,25 @@ function parseAbcParts(abc: string) {
   if (!isGrand) {
     return { header, isGrand: false, treble: splitBodyMeasures(bodyStr), bass: [] as string[] };
   }
-  const v1 = bodyStr.match(/V:V1[^\n]*\n([\s\S]*?)(?=\nV:V2)/m);
-  const v2 = bodyStr.match(/V:V2[^\n]*\n([\s\S]*)$/m);
+
+  // 큰보표: V:V1/V:V2 블록이 줄 단위로 반복될 수 있으므로 모든 블록을 수집
+  const allV1: string[] = [];
+  const allV2: string[] = [];
+  const v1Regex = /V:V1[^\n]*\n([\s\S]*?)(?=\nV:V[12]|$)/gm;
+  const v2Regex = /V:V2[^\n]*\n([\s\S]*?)(?=\nV:V[12]|$)/gm;
+  let m: RegExpExecArray | null;
+  while ((m = v1Regex.exec(bodyStr)) !== null) {
+    allV1.push(m[1]);
+  }
+  while ((m = v2Regex.exec(bodyStr)) !== null) {
+    allV2.push(m[1]);
+  }
+
   return {
     header,
     isGrand: true,
-    treble: splitBodyMeasures(v1?.[1] || ''),
-    bass: splitBodyMeasures(v2?.[1] || ''),
+    treble: splitBodyMeasures(allV1.join(' | ')),
+    bass: splitBodyMeasures(allV2.join(' | ')),
   };
 }
 
