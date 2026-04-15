@@ -1293,23 +1293,30 @@ function generateNotesAbc(
   keySignature: string = 'C',
   pickupSixteenths = 0,
   disableTies = false,
+  editorMode = false,
 ): string {
   if (notes.length === 0) return '|]';
 
   // 0단계: 이명동음 선택
   const spelledNotes = applyEnharmonicSpelling(notes, keySignature);
 
-  // 1단계: 박 가시성 규칙 — 필수 경계에서 음표 분할
-  // disableTies(중급 2단계 미만)이면 분할 없이 그대로 사용
-  const splitNotes = disableTies
-    ? spelledNotes
-    : splitAtBeatBoundaries(spelledNotes, timeSignature, pickupSixteenths);
+  // editorMode: 음표 분할/병합을 생략하여 state.notes[i] ↔ SVG 요소[i] 1:1 대응 보장
+  // (수정 모드에서 클릭 인덱스와 state 인덱스가 일치해야 선택이 정확함)
+  let mergedNotes: ScoreNote[];
+  if (editorMode) {
+    mergedNotes = spelledNotes;
+  } else {
+    // 1단계: 박 가시성 규칙 — 필수 경계에서 음표 분할
+    const splitNotes = disableTies
+      ? spelledNotes
+      : splitAtBeatBoundaries(spelledNotes, timeSignature, pickupSixteenths);
 
-  // 1.5단계: 엇박 아닌 붙임줄 합산 — 점음표 복원, 박 내 동일 음 병합 (엇박 타이 보존)
-  const mergedAdjacentNotes = mergeAdjacentTiedNotes(splitNotes, timeSignature, pickupSixteenths);
+    // 1.5단계: 엇박 아닌 붙임줄 합산 — 점음표 복원, 박 내 동일 음 병합 (엇박 타이 보존)
+    const mergedAdjacentNotes = mergeAdjacentTiedNotes(splitNotes, timeSignature, pickupSixteenths);
 
-  // 2단계: 마지막 마디 붙임줄 음표 합산 (박 분할 조각 → 원본 음가 복원)
-  const mergedNotes = mergeTiedNotesInLastMeasure(mergedAdjacentNotes, timeSignature, pickupSixteenths);
+    // 2단계: 마지막 마디 붙임줄 음표 합산 (박 분할 조각 → 원본 음가 복원)
+    mergedNotes = mergeTiedNotesInLastMeasure(mergedAdjacentNotes, timeSignature, pickupSixteenths);
+  }
 
   // 3단계: 끊어진 붙임줄 정리 — tie 뒤에 쉼표·다른 음이 오면 tie 제거
   const processedNotes = mergedNotes.map((note, idx) => {
@@ -1551,7 +1558,7 @@ function padWithFullRests(abcBody: string, targetMeasures: number): string {
   return withoutEnd + '| ' + padding + ' |]';
 }
 
-export function generateAbc(state: ScoreState): string {
+export function generateAbc(state: ScoreState, editorMode = false): string {
   const useGrandStaff = state.useGrandStaff ?? false;
   const bassNotes = state.bassNotes ?? [];
   const pickupSixteenths = state.pickupSixteenths ?? 0;
@@ -1565,6 +1572,7 @@ export function generateAbc(state: ScoreState): string {
     state.keySignature,
     pickupSixteenths,
     state.disableTies ?? false,
+    editorMode,
   );
   const measureCount = countMeasures(trebleBody);
 
@@ -1618,6 +1626,7 @@ export function generateAbc(state: ScoreState): string {
     state.keySignature,
     pickupSixteenths,
     state.disableTies ?? false,
+    editorMode,
   );
 
   // 큰보표: 두 보표의 마디 수를 일치시켜 정렬 보장

@@ -1,7 +1,7 @@
 {
   "tool_name": "Read",
-  "tool_input_preview": "{\"file_path\":\"D:\\\\Projects\\\\YulProject_1\\\\ear-training\\\\src\\\\components\\\\score\\\\AbcjsRenderer.tsx\"}",
-  "error": "File content (11319 tokens) exceeds maximum allowed tokens (10000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
-  "timestamp": "2026-04-15T06:18:55.942Z",
-  "retry_count": 1
+  "tool_input_preview": "{\"file_path\":\"D:\\\\Projects\\\\YulProject_1\\\\ear-training\\\\src\\\\components\\\\score\\\\AbcjsRenderer.tsx\",\"limit\":1000}",
+  "error": "File content (10874 tokens) exceeds maximum allowed tokens (10000). Use offset and limit parameters to read specific portions of the file, or search for specific content instead of reading the whole file.",
+  "timestamp": "2026-04-15T07:48:20.775Z",
+  "retry_count": 5
 }

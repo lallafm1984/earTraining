@@ -373,101 +373,111 @@ export default function ScoreEditor() {
   const handleModifyNotePitch = (pitch: PitchName) => {
     if (!selectedNote) return;
     const isBass = selectedNote.staff === 'bass';
-    setState(p => {
-      const arr = isBass ? (p.bassNotes || []) : p.notes;
-      const next = arr.map(n => n.id === selectedNote.id
-        ? { ...n, pitch, octave: pitch === 'rest' ? 4 : octave, accidental: pitch === 'rest' ? '' as Accidental : accidental }
-        : n);
-      return { ...p, ...(isBass ? { bassNotes: next } : { notes: next }) };
-    });
-  };
-
-  const handleDurationChange = (d: NoteDuration) => {
-    if (!selectedNote) { setDuration(d); return; }
-    const isBass = selectedNote.staff === 'bass';
 
     const arr = isBass ? (state.bassNotes || []) : state.notes;
     const idx = arr.findIndex(n => n.id === selectedNote.id);
-    if (idx < 0) { setDuration(d); return; }
+    if (idx < 0) return;
 
     const oldNote = arr[idx];
     const oldS = durationToSixteenths(oldNote.duration);
+    const newS = durationToSixteenths(duration); // 현재 팔레트 duration 적용
     const barLen = getSixteenthsPerBar(state.timeSignature);
 
-    let noteStart = 0;
-    for (let i = 0; i < idx; i++) noteStart += durationToSixteenths(arr[i].duration);
-    const noteStartInMeasure = noteStart % barLen;
-    const maxSixteenths = barLen - noteStartInMeasure;
+    // 마디 경계 계산
+    let noteAbsPos = 0;
+    for (let i = 0; i < idx; i++) noteAbsPos += durationToSixteenths(arr[i].duration);
+    const noteStartInBar = noteAbsPos % barLen;
+    const measureEndAbs = noteAbsPos - noteStartInBar + barLen;
+    const spaceInMeasure = measureEndAbs - noteAbsPos;
 
-    const DUR_OPTIONS: [NoteDuration, number][] = [
-      ['1', 16], ['2.', 12], ['2', 8], ['4.', 6], ['4', 4], ['8.', 3], ['8', 2], ['16', 1],
-    ];
-    let requestedS = durationToSixteenths(d);
-    let effectiveDur: NoteDuration = d;
-    let newS = requestedS;
-    if (requestedS > maxSixteenths) {
-      const capped = DUR_OPTIONS.find(([, s]) => s <= maxSixteenths);
-      if (!capped) { setDuration(d); return; }
-      effectiveDur = capped[0];
-      newS = capped[1];
+    if (newS > spaceInMeasure) return; // 마디 초과 불가
+
+    // 룰 5: 길어질 경우 우측에서 충분한 박자를 빌릴 수 있는지 확인
+    if (newS > oldS) {
+      const needed = newS - oldS;
+      let available = 0;
+      let rightPos = noteAbsPos + oldS;
+      for (let i = idx + 1; i < arr.length; i++) {
+        if (rightPos >= measureEndAbs) break;
+        available += durationToSixteenths(arr[i].duration);
+        rightPos += durationToSixteenths(arr[i].duration);
+        if (available >= needed) break;
+      }
+      if (available < needed) return; // 룰 5: 수정 불가
     }
 
-    setDuration(effectiveDur);
+    const makeRestNote = (rd: NoteDuration): ScoreNote => ({
+      id: Math.random().toString(36).substr(2, 9),
+      pitch: 'rest' as PitchName, octave: 4, duration: rd,
+      accidental: '' as Accidental, tie: false,
+    });
 
-    setState(p => {
-      const pArr = isBass ? (p.bassNotes || []) : p.notes;
-      const pIdx = pArr.findIndex(n => n.id === selectedNote.id);
-      if (pIdx < 0) return p;
+    // 새 배열 계산
+    const newArr = [...arr];
+    newArr[idx] = {
+      ...arr[idx],
+      pitch,
+      duration,
+      octave: pitch === 'rest' ? 4 : octave,
+      accidental: pitch === 'rest' ? '' as Accidental : accidental,
+    };
 
-      const newArr = [...pArr];
-      newArr[pIdx] = { ...pArr[pIdx], duration: effectiveDur };
+    if (newS < oldS) {
+      // 룰 3: 짧아질 경우 → 우측에 쉼표 삽입
+      const freed = oldS - newS;
+      const rests = fillWithRests(freed).map(makeRestNote);
+      newArr.splice(idx + 1, 0, ...rests);
+    } else if (newS > oldS) {
+      // 룰 4: 길어질 경우 → 우측에서 박자 차용 (같은 마디 내에서만)
+      const needed = newS - oldS;
+      let remaining = needed;
+      let removeCount = 0;
+      let leftoverRests: ScoreNote[] = [];
+      let rightPos = noteAbsPos + oldS;
 
-      if (newS < oldS) {
-        const noteEndInBar = (noteStart + newS) % barLen;
-        const spaceLeft = noteEndInBar === 0 ? 0 : barLen - noteEndInBar;
-        const fillAmount = Math.min(oldS - newS, spaceLeft);
-        if (fillAmount > 0) {
-          const rests: ScoreNote[] = fillWithRests(fillAmount).map(rd => ({
-            id: Math.random().toString(36).substr(2, 9),
-            pitch: 'rest' as PitchName, octave: 4, duration: rd,
-            accidental: '' as Accidental, tie: false,
-          }));
-          newArr.splice(pIdx + 1, 0, ...rests);
-        }
-      } else if (newS > oldS) {
-        const delta = newS - oldS;
-        let remaining = delta;
-        let removeCount = 0;
-        let leftoverRests: ScoreNote[] = [];
-
-        for (let i = pIdx + 1; i < newArr.length; i++) {
-          const next = newArr[i];
-          const nextS = durationToSixteenths(next.duration);
-          if (nextS <= remaining) {
-            removeCount++;
-            remaining -= nextS;
-            if (remaining === 0) break;
-          } else {
-            removeCount++;
-            const leftover = nextS - remaining;
-            leftoverRests = fillWithRests(leftover).map(rd => ({
-              id: Math.random().toString(36).substr(2, 9),
-              pitch: 'rest' as PitchName, octave: 4, duration: rd,
-              accidental: '' as Accidental, tie: false,
-            }));
-            remaining = 0;
-            break;
-          }
-        }
-
-        if (removeCount > 0) {
-          newArr.splice(pIdx + 1, removeCount);
-          if (leftoverRests.length > 0) newArr.splice(pIdx + 1, 0, ...leftoverRests);
+      for (let i = idx + 1; i < newArr.length; i++) {
+        if (rightPos >= measureEndAbs) break;
+        const rightS = durationToSixteenths(newArr[i].duration);
+        if (rightS <= remaining) {
+          removeCount++;
+          remaining -= rightS;
+          rightPos += rightS;
+          if (remaining === 0) break;
+        } else {
+          removeCount++;
+          leftoverRests = fillWithRests(rightS - remaining).map(makeRestNote);
+          break;
         }
       }
+      if (removeCount > 0) {
+        newArr.splice(idx + 1, removeCount);
+        if (leftoverRests.length > 0) newArr.splice(idx + 1, 0, ...leftoverRests);
+      }
+    }
 
-      return { ...p, ...(isBass ? { bassNotes: newArr } : { notes: newArr }) };
-    });
+    // 룰 6: 다음 음표로 선택 이동
+    const nextNote = newArr[idx + 1] ?? null;
+
+    setState(p => ({ ...p, ...(isBass ? { bassNotes: newArr } : { notes: newArr }) }));
+
+    if (nextNote) {
+      setSelectedNote({ id: nextNote.id, staff: selectedNote.staff });
+      setDuration(nextNote.duration);
+      if (nextNote.pitch !== 'rest') {
+        setOctave(nextNote.octave);
+        setAccidental(nextNote.accidental);
+      }
+      setTie(nextNote.tie ?? false);
+      setTuplet((nextNote.tuplet as TupletType) || '');
+      setTupletCounter(0);
+    } else {
+      setSelectedNote(null);
+    }
+  };
+
+  // 음표 길이 버튼: 팔레트 UI 상태만 변경 (악보 반영은 음이름/쉼표 클릭 시)
+  const handleDurationChange = (d: NoteDuration) => {
+    setDuration(d);
   };
 
   const handleOctaveChange = (newOctave: number) => {
@@ -742,7 +752,7 @@ export default function ScoreEditor() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const abcString = generateAbc(state);
+  const abcString = generateAbc(state, true);
   const noteCount = state.notes.length + (state.bassNotes?.length ?? 0);
   const [leftPanelOpen, setLeftPanelOpen] = useState(false);
 

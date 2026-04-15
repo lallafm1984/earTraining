@@ -1,2 +1,5 @@
 {"t":0,"agent":"system","event":"skill_invoked","skill_name":"superpowers:systematic-debugging"}
 {"t":0,"agent":"a60ce45","agent_type":"unknown","event":"agent_stop","success":true}
+{"t":0,"agent":"abbb297","agent_type":"Explore","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"abbb297","agent_type":"Explore","event":"agent_stop","success":true,"duration_ms":52033}
+{"t":0,"agent":"a95f3c3","agent_type":"unknown","event":"agent_stop","success":true}

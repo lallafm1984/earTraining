@@ -158,14 +158,20 @@
   "hotPaths": [
     {
       "path": "src\\components\\score\\AbcjsRenderer.tsx",
-      "accessCount": 48,
-      "lastAccessed": 1776238109894,
+      "accessCount": 52,
+      "lastAccessed": 1776240080850,
       "type": "file"
     },
     {
       "path": "src\\lib\\scoreUtils.ts",
-      "accessCount": 22,
-      "lastAccessed": 1776238283574,
+      "accessCount": 32,
+      "lastAccessed": 1776240591448,
+      "type": "directory"
+    },
+    {
+      "path": "src\\components\\score\\ScoreEditor.tsx",
+      "accessCount": 30,
+      "lastAccessed": 1776240602222,
       "type": "directory"
     },
     {
@@ -190,12 +196,6 @@
       "path": "src\\lib",
       "accessCount": 3,
       "lastAccessed": 1776238168869,
-      "type": "directory"
-    },
-    {
-      "path": "src\\components\\score\\ScoreEditor.tsx",
-      "accessCount": 2,
-      "lastAccessed": 1776234421030,
       "type": "directory"
     },
     {
@@ -250,6 +250,12 @@
       "path": "src\\lib\\twoVoice\\bassGenerator.ts",
       "accessCount": 1,
       "lastAccessed": 1776238249842,
+      "type": "directory"
+    },
+    {
+      "path": "src\\components\\score",
+      "accessCount": 1,
+      "lastAccessed": 1776239296778,
       "type": "directory"
     }
   ],
