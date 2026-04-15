@@ -164,8 +164,8 @@
     },
     {
       "path": "src\\lib\\scoreUtils.ts",
-      "accessCount": 32,
-      "lastAccessed": 1776240591448,
+      "accessCount": 35,
+      "lastAccessed": 1776262323135,
       "type": "directory"
     },
     {
@@ -256,6 +256,24 @@
       "path": "src\\components\\score",
       "accessCount": 1,
       "lastAccessed": 1776239296778,
+      "type": "directory"
+    },
+    {
+      "path": "src/lib",
+      "accessCount": 1,
+      "lastAccessed": 1776262299429,
+      "type": "directory"
+    },
+    {
+      "path": "src/lib/scoreUtils.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776262303497,
+      "type": "directory"
+    },
+    {
+      "path": "src/lib/scoreGenerator.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776262304068,
       "type": "directory"
     }
   ],

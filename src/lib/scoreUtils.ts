@@ -1584,7 +1584,7 @@ export function generateAbc(state: ScoreState, editorMode = false): string {
     `T: ${state.title || 'Score'}`,
     `M: ${state.timeSignature}`,
     `L: 1/16`,
-    `Q: 1/4=${state.tempo}`,
+    `Q: ${['6/8','9/8','12/8'].includes(state.timeSignature) ? '1/8' : '1/4'}=${state.tempo}`,
     ...directives,
     `K: ${state.keySignature}`,
   ].join('\n');
