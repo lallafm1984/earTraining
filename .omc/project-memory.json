@@ -170,8 +170,8 @@
     },
     {
       "path": "src\\components\\score\\ScoreEditor.tsx",
-      "accessCount": 30,
-      "lastAccessed": 1776240602222,
+      "accessCount": 33,
+      "lastAccessed": 1776262737829,
       "type": "directory"
     },
     {
@@ -196,6 +196,12 @@
       "path": "src\\lib",
       "accessCount": 3,
       "lastAccessed": 1776238168869,
+      "type": "directory"
+    },
+    {
+      "path": "src/lib/scoreUtils.ts",
+      "accessCount": 3,
+      "lastAccessed": 1776262715201,
       "type": "directory"
     },
     {
@@ -265,15 +271,21 @@
       "type": "directory"
     },
     {
-      "path": "src/lib/scoreUtils.ts",
-      "accessCount": 1,
-      "lastAccessed": 1776262303497,
-      "type": "directory"
-    },
-    {
       "path": "src/lib/scoreGenerator.ts",
       "accessCount": 1,
       "lastAccessed": 1776262304068,
+      "type": "directory"
+    },
+    {
+      "path": "src/components/score/ScoreEditor.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1776262681607,
+      "type": "directory"
+    },
+    {
+      "path": "src",
+      "accessCount": 1,
+      "lastAccessed": 1776262721262,
       "type": "directory"
     }
   ],

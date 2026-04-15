@@ -445,7 +445,20 @@ export default function ScoreEditor() {
           if (remaining === 0) break;
         } else {
           removeCount++;
-          leftoverRests = fillWithRests(rightS - remaining).map(makeRestNote);
+          const rightNote = newArr[i];
+          const leftoverSixteenths = rightS - remaining;
+          if (rightNote.pitch === 'rest') {
+            leftoverRests = fillWithRests(leftoverSixteenths).map(makeRestNote);
+          } else {
+            leftoverRests = fillWithRests(leftoverSixteenths).map(rd => ({
+              id: Math.random().toString(36).substr(2, 9),
+              pitch: rightNote.pitch,
+              octave: rightNote.octave,
+              accidental: rightNote.accidental,
+              duration: rd,
+              tie: false,
+            }));
+          }
           break;
         }
       }
