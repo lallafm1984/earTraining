@@ -1,0 +1,257 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1776233664234,
+  "projectRoot": "D:\\Projects\\YulProject_1\\ear-training",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "next",
+        "version": "16.1.6",
+        "category": "fullstack"
+      },
+      {
+        "name": "react",
+        "version": "19.2.3",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "19.2.3",
+        "category": "frontend"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": null,
+    "lintCommand": "npm run lint",
+    "devCommand": "npm run dev",
+    "scripts": {
+      "dev": "next dev",
+      "build": "next build",
+      "start": "next start",
+      "lint": "eslint"
+    }
+  },
+  "conventions": {
+    "namingStyle": "camelCase",
+    "importStyle": "ES modules",
+    "testPattern": null,
+    "fileOrganization": "type-based"
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "public",
+      "src"
+    ],
+    "gitBranches": null
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "public": {
+      "path": "public",
+      "purpose": "Public files",
+      "fileCount": 7,
+      "lastAccessed": 1776233664203,
+      "keyFiles": [
+        "1-2.4분의4박자.mp3",
+        "file.svg",
+        "globe.svg",
+        "next.svg",
+        "Q3SMQT2Iw4N8hrfxj3Sn3BD-zaiStOB2WdtIfIACv2TaU635BR4uxUMYRNuQXjq5J1oCEf69Y5r4GCvWe6Np6w.webp"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 1,
+      "lastAccessed": 1776233664204,
+      "keyFiles": [
+        "proxy.ts"
+      ]
+    },
+    "supabase": {
+      "path": "supabase",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1776233664212,
+      "keyFiles": []
+    },
+    "src\\app": {
+      "path": "src\\app",
+      "purpose": "Application code",
+      "fileCount": 4,
+      "lastAccessed": 1776233664213,
+      "keyFiles": [
+        "favicon.ico",
+        "globals.css",
+        "layout.tsx"
+      ]
+    },
+    "src\\components": {
+      "path": "src\\components",
+      "purpose": "UI components",
+      "fileCount": 0,
+      "lastAccessed": 1776233664214,
+      "keyFiles": []
+    },
+    "src\\lib": {
+      "path": "src\\lib",
+      "purpose": "Library code",
+      "fileCount": 6,
+      "lastAccessed": 1776233664214,
+      "keyFiles": [
+        "genCost.ts",
+        "index.ts",
+        "melodyRhythmLevel.ts"
+      ]
+    },
+    "src\\middleware": {
+      "path": "src\\middleware",
+      "purpose": "Middleware",
+      "fileCount": 0,
+      "lastAccessed": 1776233664215,
+      "keyFiles": []
+    },
+    "src\\types": {
+      "path": "src\\types",
+      "purpose": "Type definitions",
+      "fileCount": 1,
+      "lastAccessed": 1776233664216,
+      "keyFiles": [
+        "database.ts"
+      ]
+    },
+    "supabase\\migrations": {
+      "path": "supabase\\migrations",
+      "purpose": "Database migrations",
+      "fileCount": 2,
+      "lastAccessed": 1776233664216,
+      "keyFiles": [
+        "001_initial_schema.sql",
+        "setup_test_db.sql"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src\\components\\score\\AbcjsRenderer.tsx",
+      "accessCount": 48,
+      "lastAccessed": 1776238109894,
+      "type": "file"
+    },
+    {
+      "path": "src\\lib\\scoreUtils.ts",
+      "accessCount": 22,
+      "lastAccessed": 1776238283574,
+      "type": "directory"
+    },
+    {
+      "path": "src\\lib\\scoreGenerator.ts",
+      "accessCount": 13,
+      "lastAccessed": 1776238161151,
+      "type": "directory"
+    },
+    {
+      "path": "src\\lib\\trebleRhythmFill.ts",
+      "accessCount": 5,
+      "lastAccessed": 1776238069565,
+      "type": "directory"
+    },
+    {
+      "path": "src\\lib\\twoVoice\\bassToScore.ts",
+      "accessCount": 4,
+      "lastAccessed": 1776238299708,
+      "type": "directory"
+    },
+    {
+      "path": "src\\lib",
+      "accessCount": 3,
+      "lastAccessed": 1776238168869,
+      "type": "directory"
+    },
+    {
+      "path": "src\\components\\score\\ScoreEditor.tsx",
+      "accessCount": 2,
+      "lastAccessed": 1776234421030,
+      "type": "directory"
+    },
+    {
+      "path": "src\\lib\\twoVoice",
+      "accessCount": 2,
+      "lastAccessed": 1776238212354,
+      "type": "directory"
+    },
+    {
+      "path": "src\\lib\\twoVoice\\scales.ts",
+      "accessCount": 2,
+      "lastAccessed": 1776238248328,
+      "type": "directory"
+    },
+    {
+      "path": "src\\components",
+      "accessCount": 1,
+      "lastAccessed": 1776234032764,
+      "type": "directory"
+    },
+    {
+      "path": "src\\lib\\twoVoice\\index.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776238172759,
+      "type": "directory"
+    },
+    {
+      "path": "src\\lib\\twoVoice\\twoVoiceStack.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776238173365,
+      "type": "file"
+    },
+    {
+      "path": "src\\lib\\twoVoice\\types.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776238177415,
+      "type": "directory"
+    },
+    {
+      "path": "src\\lib\\twoVoice\\meter.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776238216137,
+      "type": "file"
+    },
+    {
+      "path": "src\\lib\\twoVoice\\bassPatterns.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776238217255,
+      "type": "directory"
+    },
+    {
+      "path": "src\\lib\\twoVoice\\bassGenerator.ts",
+      "accessCount": 1,
+      "lastAccessed": 1776238249842,
+      "type": "directory"
+    }
+  ],
+  "userDirectives": []
+}

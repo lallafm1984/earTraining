@@ -273,27 +273,18 @@ export default function AbcjsRenderer({
     // 스케일 프리픽스 문자열 생성
     let scalePrepend = '';
     if (prependBasePitch) {
-      const m = multiplier;
+      // 박자에 관계없이 항상 4분음표(m=4)로 고정 → 모든 박자에서 동일한 스케일 속도
+      // 바줄 없이 단순 나열 → abcjs의 불완전 마디 패딩 문제 방지
       const ascending = generateAbcScaleNotes(keySignature);
       const descending = [...ascending].slice(0, -1).reverse();
       const allNotes = [...ascending, ...descending, 'z'];
 
-      const [topStr, bottomStr] = timeSignature.split('/');
-      const bottom = parseInt(bottomStr, 10) || 4;
-      const sixteenthsPerBar = parseInt(topStr, 10) * (16 / bottom);
-      let barPos = 0;
-
-      scalePrepend += `[Q:${scaleTempo}] `;
+      scalePrepend += `[Q:1/4=${scaleTempo}] `;
       for (const n of allNotes) {
-        scalePrepend += `${n}${m} `;
-        barPos += m;
-        if (barPos >= sixteenthsPerBar) {
-          scalePrepend += '| ';
-          barPos = 0;
-        }
+        scalePrepend += `${n}4 `;
       }
-      if (barPos > 0) scalePrepend += '| ';
-      scalePrepend += `[Q:${tempo}] `;
+      scalePrepend += '| ';
+      scalePrepend += `[Q:1/4=${tempo}] `;
     }
 
     // 메트로놈 묵음 프리픽스 문자열 생성
@@ -332,21 +323,11 @@ export default function AbcjsRenderer({
     // bass 보이스용 묵음 계산 (스케일 + 메트로놈 길이만큼)
     let bassSilence = '';
     if (prependBasePitch) {
-      const m = multiplier;
-      const [topStr, bottomStr] = timeSignature.split('/');
-      const bottom = parseInt(bottomStr, 10) || 4;
-      const sixteenthsPerBar = parseInt(topStr, 10) * (16 / bottom);
-      // 16음표(상행8+하행7+쉼표1) = 16박
-      let barPos = 0;
+      // treble과 동일: 4분음표 16개, 바줄 없이
       for (let i = 0; i < 16; i++) {
-        bassSilence += `z${m} `;
-        barPos += m;
-        if (barPos >= sixteenthsPerBar) {
-          bassSilence += '| ';
-          barPos = 0;
-        }
+        bassSilence += `z4 `;
       }
-      if (barPos > 0) bassSilence += '| ';
+      bassSilence += '| ';
     }
     if (prependMetronome) {
       const m = multiplier;
@@ -389,7 +370,7 @@ export default function AbcjsRenderer({
       }
 
       const { top, actualBeatDuration } = getTimingInfo();
-      const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
+      const { beatDuration: scaleQDur } = getScaleTimingInfo();
       const combinedAbc = buildCombinedAbc();
       const parsed = abcjs.renderAbc("*", combinedAbc, { responsive: 'resize' });
       const visualObj = parsed?.[0];
@@ -401,7 +382,7 @@ export default function AbcjsRenderer({
         const primeResult = await synth.prime();
 
         if (prependMetronome) {
-          const metronomeStartTime = prependBasePitch ? 16 * scaleBeatDuration : 0;
+          const metronomeStartTime = prependBasePitch ? 16 * scaleQDur : 0;
           for (let i = 0; i < top; i++) {
             createMetronomeClick(
               audioCtx,
@@ -424,7 +405,7 @@ export default function AbcjsRenderer({
           const { treble } = parseAbcParts(abcString);
           const measureCount = treble.length;
           totalDuration =
-            (prependBasePitch ? 16 * scaleBeatDuration : 0) +
+            (prependBasePitch ? 16 * scaleQDur : 0) +
             (prependMetronome ? top * actualBeatDuration : 0) +
             measureCount * top * actualBeatDuration;
         }
@@ -493,8 +474,8 @@ export default function AbcjsRenderer({
       const audioCtx = audioCtxRef.current;
       if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-      const { top, actualBeatDuration, multiplier } = getTimingInfo();
-      const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
+      const { top, actualBeatDuration } = getTimingInfo();
+      const { beatDuration: scaleQDur } = getScaleTimingInfo();
       const measureDurationSec = top * actualBeatDuration;
 
       const cancelled = () => cancelRef.current;
@@ -528,19 +509,10 @@ export default function AbcjsRenderer({
         const ascending = generateAbcScaleNotes(keySignature);
         const descending = [...ascending].slice(0, -1).reverse();
         const allNotes = [...ascending, ...descending, 'z'];
-        const [topStr, bottomStr] = timeSignature.split('/');
-        const bottom = parseInt(bottomStr, 10) || 4;
-        const sixteenthsPerBar = parseInt(topStr, 10) * (16 / bottom);
-        let barPos = 0;
-        let scaleBody = `[Q:${scaleTempo}] `;
-        for (const n of allNotes) {
-          scaleBody += `${n}${multiplier} `;
-          barPos += multiplier;
-          if (barPos >= sixteenthsPerBar) { scaleBody += '| '; barPos = 0; }
-        }
-        const trimmedBody = scaleBody.trimEnd().replace(/\|$/, '').trimEnd();
-        const scaleAbc = cleanHeader + '\n' + trimmedBody + ' |]';
-        await playSingleAbc(audioCtx, scaleAbc, 16 * scaleBeatDuration);
+        let scaleBody = `[Q:1/4=${scaleTempo}] `;
+        for (const n of allNotes) { scaleBody += `${n}4 `; }
+        const scaleAbc = cleanHeader + '\n' + scaleBody.trimEnd() + ' |]';
+        await playSingleAbc(audioCtx, scaleAbc, 16 * scaleQDur);
         if (cancelled()) { setIsPlaying(false); return; }
       }
 
@@ -615,7 +587,7 @@ export default function AbcjsRenderer({
     setIsExporting(true);
     try {
       const { top, actualBeatDuration } = getTimingInfo();
-      const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
+      const { beatDuration: scaleQDur } = getScaleTimingInfo();
       const sampleRate = 44100;
       const combinedAbc = buildCombinedAbc();
       const parsed = abcjs.renderAbc("*", combinedAbc, { responsive: 'resize' });
@@ -628,7 +600,7 @@ export default function AbcjsRenderer({
         const { treble } = parseAbcParts(abcString);
         const measureCount = treble.length;
         totalDuration =
-          (prependBasePitch ? 16 * scaleBeatDuration : 0) +
+          (prependBasePitch ? 16 * scaleQDur : 0) +
           (prependMetronome ? top * actualBeatDuration : 0) +
           measureCount * top * actualBeatDuration;
       }
@@ -646,7 +618,7 @@ export default function AbcjsRenderer({
       await synth.prime();
 
       if (prependMetronome) {
-        const metronomeStartTime = prependBasePitch ? 16 * scaleBeatDuration : 0;
+        const metronomeStartTime = prependBasePitch ? 16 * scaleQDur : 0;
         for (let i = 0; i < top; i++) {
           createMetronomeClick(offlineCtx, metronomeStartTime + i * actualBeatDuration, i === 0, metronomeFreq);
         }
@@ -669,8 +641,8 @@ export default function AbcjsRenderer({
     setIsExporting(true);
     try {
       const sampleRate = 44100;
-      const { top, actualBeatDuration, multiplier } = getTimingInfo();
-      const { actualBeatDuration: scaleBeatDuration } = getScaleTimingInfo();
+      const { top, actualBeatDuration } = getTimingInfo();
+      const { beatDuration: scaleQDur } = getScaleTimingInfo();
       const measureDur = top * actualBeatDuration;
       const metroDur = measureDur;
       const restDur = examWaitSeconds;
@@ -694,7 +666,7 @@ export default function AbcjsRenderer({
 
       // 스케일
       if (prependBasePitch) {
-        const scaleDur = 16 * scaleBeatDuration;
+        const scaleDur = 16 * scaleQDur;
         steps.push({ kind: 'scale', dur: scaleDur });
       }
 
@@ -749,18 +721,9 @@ export default function AbcjsRenderer({
         const ascending = generateAbcScaleNotes(keySignature);
         const descending = [...ascending].slice(0, -1).reverse();
         const allNotes = [...ascending, ...descending, 'z'];
-        const [topStr, bottomStr] = timeSignature.split('/');
-        const bottom = parseInt(bottomStr, 10) || 4;
-        const sixteenthsPerBar = parseInt(topStr, 10) * (16 / bottom);
-        let barPos = 0;
-        let body = `[Q:${scaleTempo}] `;
-        for (const n of allNotes) {
-          body += `${n}${multiplier} `;
-          barPos += multiplier;
-          if (barPos >= sixteenthsPerBar) { body += '| '; barPos = 0; }
-        }
-        const trimmed = body.trimEnd().replace(/\|$/, '').trimEnd();
-        scaleAbc = cleanHdr + '\n' + trimmed + ' |]';
+        let body = `[Q:1/4=${scaleTempo}] `;
+        for (const n of allNotes) { body += `${n}4 `; }
+        scaleAbc = cleanHdr + '\n' + body.trimEnd() + ' |]';
       }
 
       // 타임라인 구성: offset 계산 + 버퍼 준비
