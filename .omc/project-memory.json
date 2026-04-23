@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1776233664234,
+  "lastScanned": 1776920255381,
   "projectRoot": "D:\\Projects\\YulProject_1\\ear-training",
   "techStack": {
     "languages": [
@@ -74,7 +74,7 @@
       "path": "public",
       "purpose": "Public files",
       "fileCount": 7,
-      "lastAccessed": 1776233664203,
+      "lastAccessed": 1776920255358,
       "keyFiles": [
         "1-2.4분의4박자.mp3",
         "file.svg",
@@ -87,7 +87,7 @@
       "path": "src",
       "purpose": "Source code",
       "fileCount": 1,
-      "lastAccessed": 1776233664204,
+      "lastAccessed": 1776920255358,
       "keyFiles": [
         "proxy.ts"
       ]
@@ -96,14 +96,14 @@
       "path": "supabase",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1776233664212,
+      "lastAccessed": 1776920255365,
       "keyFiles": []
     },
     "src\\app": {
       "path": "src\\app",
       "purpose": "Application code",
       "fileCount": 4,
-      "lastAccessed": 1776233664213,
+      "lastAccessed": 1776920255366,
       "keyFiles": [
         "favicon.ico",
         "globals.css",
@@ -114,14 +114,14 @@
       "path": "src\\components",
       "purpose": "UI components",
       "fileCount": 0,
-      "lastAccessed": 1776233664214,
+      "lastAccessed": 1776920255367,
       "keyFiles": []
     },
     "src\\lib": {
       "path": "src\\lib",
       "purpose": "Library code",
       "fileCount": 6,
-      "lastAccessed": 1776233664214,
+      "lastAccessed": 1776920255367,
       "keyFiles": [
         "genCost.ts",
         "index.ts",
@@ -132,14 +132,14 @@
       "path": "src\\middleware",
       "purpose": "Middleware",
       "fileCount": 0,
-      "lastAccessed": 1776233664215,
+      "lastAccessed": 1776920255367,
       "keyFiles": []
     },
     "src\\types": {
       "path": "src\\types",
       "purpose": "Type definitions",
       "fileCount": 1,
-      "lastAccessed": 1776233664216,
+      "lastAccessed": 1776920255367,
       "keyFiles": [
         "database.ts"
       ]
@@ -148,7 +148,7 @@
       "path": "supabase\\migrations",
       "purpose": "Database migrations",
       "fileCount": 2,
-      "lastAccessed": 1776233664216,
+      "lastAccessed": 1776920255368,
       "keyFiles": [
         "001_initial_schema.sql",
         "setup_test_db.sql"
@@ -158,134 +158,26 @@
   "hotPaths": [
     {
       "path": "src\\components\\score\\AbcjsRenderer.tsx",
-      "accessCount": 52,
-      "lastAccessed": 1776240080850,
-      "type": "file"
+      "accessCount": 34,
+      "lastAccessed": 1776922389005,
+      "type": "directory"
     },
     {
       "path": "src\\lib\\scoreUtils.ts",
-      "accessCount": 35,
-      "lastAccessed": 1776262323135,
+      "accessCount": 5,
+      "lastAccessed": 1776922175091,
+      "type": "file"
+    },
+    {
+      "path": "src",
+      "accessCount": 4,
+      "lastAccessed": 1776921812175,
       "type": "directory"
     },
     {
       "path": "src\\components\\score\\ScoreEditor.tsx",
-      "accessCount": 33,
-      "lastAccessed": 1776262737829,
-      "type": "directory"
-    },
-    {
-      "path": "src\\lib\\scoreGenerator.ts",
-      "accessCount": 13,
-      "lastAccessed": 1776238161151,
-      "type": "directory"
-    },
-    {
-      "path": "src\\lib\\trebleRhythmFill.ts",
-      "accessCount": 5,
-      "lastAccessed": 1776238069565,
-      "type": "directory"
-    },
-    {
-      "path": "src\\lib\\twoVoice\\bassToScore.ts",
-      "accessCount": 4,
-      "lastAccessed": 1776238299708,
-      "type": "directory"
-    },
-    {
-      "path": "src\\lib",
-      "accessCount": 3,
-      "lastAccessed": 1776238168869,
-      "type": "directory"
-    },
-    {
-      "path": "src/lib/scoreUtils.ts",
-      "accessCount": 3,
-      "lastAccessed": 1776262715201,
-      "type": "directory"
-    },
-    {
-      "path": "src\\lib\\twoVoice",
-      "accessCount": 2,
-      "lastAccessed": 1776238212354,
-      "type": "directory"
-    },
-    {
-      "path": "src\\lib\\twoVoice\\scales.ts",
-      "accessCount": 2,
-      "lastAccessed": 1776238248328,
-      "type": "directory"
-    },
-    {
-      "path": "src\\components",
       "accessCount": 1,
-      "lastAccessed": 1776234032764,
-      "type": "directory"
-    },
-    {
-      "path": "src\\lib\\twoVoice\\index.ts",
-      "accessCount": 1,
-      "lastAccessed": 1776238172759,
-      "type": "directory"
-    },
-    {
-      "path": "src\\lib\\twoVoice\\twoVoiceStack.ts",
-      "accessCount": 1,
-      "lastAccessed": 1776238173365,
-      "type": "file"
-    },
-    {
-      "path": "src\\lib\\twoVoice\\types.ts",
-      "accessCount": 1,
-      "lastAccessed": 1776238177415,
-      "type": "directory"
-    },
-    {
-      "path": "src\\lib\\twoVoice\\meter.ts",
-      "accessCount": 1,
-      "lastAccessed": 1776238216137,
-      "type": "file"
-    },
-    {
-      "path": "src\\lib\\twoVoice\\bassPatterns.ts",
-      "accessCount": 1,
-      "lastAccessed": 1776238217255,
-      "type": "directory"
-    },
-    {
-      "path": "src\\lib\\twoVoice\\bassGenerator.ts",
-      "accessCount": 1,
-      "lastAccessed": 1776238249842,
-      "type": "directory"
-    },
-    {
-      "path": "src\\components\\score",
-      "accessCount": 1,
-      "lastAccessed": 1776239296778,
-      "type": "directory"
-    },
-    {
-      "path": "src/lib",
-      "accessCount": 1,
-      "lastAccessed": 1776262299429,
-      "type": "directory"
-    },
-    {
-      "path": "src/lib/scoreGenerator.ts",
-      "accessCount": 1,
-      "lastAccessed": 1776262304068,
-      "type": "directory"
-    },
-    {
-      "path": "src/components/score/ScoreEditor.tsx",
-      "accessCount": 1,
-      "lastAccessed": 1776262681607,
-      "type": "directory"
-    },
-    {
-      "path": "src",
-      "accessCount": 1,
-      "lastAccessed": 1776262721262,
+      "lastAccessed": 1776920307990,
       "type": "directory"
     }
   ],

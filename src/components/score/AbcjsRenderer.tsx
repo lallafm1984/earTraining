@@ -244,15 +244,30 @@ export default function AbcjsRenderer({
   }, [abcString, selIndex, selVoice]);
 
   // 템포를 인자로 받는 타이밍 계산 함수
+  // scoreUtils.generateAbc는 컴파운드 미터(6/8, 9/8, 12/8)에 Q:1/8=tempo,
+  // 나머지에 Q:1/4=tempo를 넣는다. 따라서 tempo는 항상 "박자 분모 단위의 BPM"으로
+  // 해석되며, 분모 단위 1박의 지속시간은 단순히 60/bpm이다.
   const getTimingForBpm = useCallback((bpm: number) => {
     const [topStr, bottomStr] = timeSignature.split('/');
     const top = parseInt(topStr, 10) || 4;
     const bottom = parseInt(bottomStr, 10) || 4;
-    const beatDuration = 60 / bpm;
-    const actualBeatDuration = beatDuration * (4 / bottom);
     const multiplier = 16 / bottom;
 
-    return { top, bottom, beatDuration, actualBeatDuration, multiplier };
+    const isCompound = bottom === 8 && (top === 6 || top === 9 || top === 12);
+
+    // 분모 단위(=음악의 1박) 지속시간. 4/4 → 4분음표, 6/8 → 8분음표.
+    const actualBeatDuration = 60 / bpm;
+    // 스케일 섹션([Q:1/4=scaleTempo])에서 사용하는 4분음표 지속시간(=scaleQDur).
+    const beatDuration = 60 / bpm;
+
+    const clickCount = top;
+    const clickInterval = actualBeatDuration;
+    const metronomeDuration = clickCount * clickInterval;
+
+    return {
+      top, bottom, beatDuration, actualBeatDuration, multiplier,
+      clickCount, clickInterval, metronomeDuration, isCompound,
+    };
   }, [timeSignature]);
 
   const getTimingInfo = useCallback(() => getTimingForBpm(tempo), [getTimingForBpm, tempo]);
@@ -260,7 +275,7 @@ export default function AbcjsRenderer({
 
   // ── 오디오 전체 ABC 생성 (스케일 + 메트로놈 묵음 + 본 악보) ──────────
   const buildCombinedAbc = useCallback(() => {
-    const { multiplier } = getTimingInfo();
+    const { multiplier, isCompound } = getTimingInfo();
     const lines = abcString.split('\n');
     const isHeader = (l: string) => (/^[A-Z]:/.test(l) && !/^V:/.test(l)) || /^%%/.test(l);
     const headerLines = lines.filter(isHeader);
@@ -284,10 +299,11 @@ export default function AbcjsRenderer({
         scalePrepend += `${n}4 `;
       }
       scalePrepend += '| ';
-      scalePrepend += `[Q:1/4=${tempo}] `;
+      // 본 악보용 Q 복원: 컴파운드 미터는 Q:1/8=tempo, 단순 미터는 Q:1/4=tempo
+      scalePrepend += isCompound ? `[Q:1/8=${tempo}] ` : `[Q:1/4=${tempo}] `;
     }
 
-    // 메트로놈 묵음 프리픽스 문자열 생성
+    // 메트로놈 묵음 프리픽스 문자열 생성 (항상 1마디 = clickCount 클릭 × clickInterval)
     let metronomePrepend = '';
     if (prependMetronome) {
       const m = multiplier;
@@ -369,7 +385,7 @@ export default function AbcjsRenderer({
         await audioCtx.resume();
       }
 
-      const { top, actualBeatDuration } = getTimingInfo();
+      const { top, actualBeatDuration, clickCount, clickInterval, metronomeDuration } = getTimingInfo();
       const { beatDuration: scaleQDur } = getScaleTimingInfo();
       const combinedAbc = buildCombinedAbc();
       const parsed = abcjs.renderAbc("*", combinedAbc, { responsive: 'resize' });
@@ -383,10 +399,10 @@ export default function AbcjsRenderer({
 
         if (prependMetronome) {
           const metronomeStartTime = prependBasePitch ? 16 * scaleQDur : 0;
-          for (let i = 0; i < top; i++) {
+          for (let i = 0; i < clickCount; i++) {
             createMetronomeClick(
               audioCtx,
-              audioCtx.currentTime + metronomeStartTime + i * actualBeatDuration,
+              audioCtx.currentTime + metronomeStartTime + i * clickInterval,
               i === 0,
               metronomeFreq
             );
@@ -406,7 +422,7 @@ export default function AbcjsRenderer({
           const measureCount = treble.length;
           totalDuration =
             (prependBasePitch ? 16 * scaleQDur : 0) +
-            (prependMetronome ? top * actualBeatDuration : 0) +
+            (prependMetronome ? metronomeDuration : 0) +
             measureCount * top * actualBeatDuration;
         }
         const endMs = (totalDuration + 1.0) * 1000;
@@ -474,7 +490,7 @@ export default function AbcjsRenderer({
       const audioCtx = audioCtxRef.current;
       if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-      const { top, actualBeatDuration } = getTimingInfo();
+      const { top, actualBeatDuration, clickCount, clickInterval, metronomeDuration } = getTimingInfo();
       const { beatDuration: scaleQDur } = getScaleTimingInfo();
       const measureDurationSec = top * actualBeatDuration;
 
@@ -482,10 +498,10 @@ export default function AbcjsRenderer({
       const rest = () => sleep(examWaitSeconds * 1000);
 
       const playMetro = async () => {
-        for (let j = 0; j < top; j++) {
-          createMetronomeClick(audioCtx, audioCtx.currentTime + j * actualBeatDuration, j === 0, metronomeFreq);
+        for (let j = 0; j < clickCount; j++) {
+          createMetronomeClick(audioCtx, audioCtx.currentTime + j * clickInterval, j === 0, metronomeFreq);
         }
-        await sleep(measureDurationSec * 1000);
+        await sleep(metronomeDuration * 1000);
       };
 
       const { header, isGrand, treble, bass } = parseAbcParts(abcString);
@@ -586,7 +602,7 @@ export default function AbcjsRenderer({
   const handleDownloadAudio = useCallback(async (title: string) => {
     setIsExporting(true);
     try {
-      const { top, actualBeatDuration } = getTimingInfo();
+      const { top, actualBeatDuration, clickCount, clickInterval, metronomeDuration } = getTimingInfo();
       const { beatDuration: scaleQDur } = getScaleTimingInfo();
       const sampleRate = 44100;
       const combinedAbc = buildCombinedAbc();
@@ -601,7 +617,7 @@ export default function AbcjsRenderer({
         const measureCount = treble.length;
         totalDuration =
           (prependBasePitch ? 16 * scaleQDur : 0) +
-          (prependMetronome ? top * actualBeatDuration : 0) +
+          (prependMetronome ? metronomeDuration : 0) +
           measureCount * top * actualBeatDuration;
       }
       totalDuration += 2;
@@ -619,8 +635,8 @@ export default function AbcjsRenderer({
 
       if (prependMetronome) {
         const metronomeStartTime = prependBasePitch ? 16 * scaleQDur : 0;
-        for (let i = 0; i < top; i++) {
-          createMetronomeClick(offlineCtx, metronomeStartTime + i * actualBeatDuration, i === 0, metronomeFreq);
+        for (let i = 0; i < clickCount; i++) {
+          createMetronomeClick(offlineCtx, metronomeStartTime + i * clickInterval, i === 0, metronomeFreq);
         }
       }
 
@@ -641,10 +657,10 @@ export default function AbcjsRenderer({
     setIsExporting(true);
     try {
       const sampleRate = 44100;
-      const { top, actualBeatDuration } = getTimingInfo();
+      const { top, actualBeatDuration, clickCount, clickInterval, metronomeDuration } = getTimingInfo();
       const { beatDuration: scaleQDur } = getScaleTimingInfo();
       const measureDur = top * actualBeatDuration;
-      const metroDur = measureDur;
+      const metroDur = metronomeDuration;
       const restDur = examWaitSeconds;
 
       const { header, isGrand, treble, bass } = parseAbcParts(abcString);
@@ -762,8 +778,8 @@ export default function AbcjsRenderer({
           src.start(item.offset);
         }
         if (item.metro) {
-          for (let j = 0; j < top; j++) {
-            createMetronomeClick(finalCtx, item.offset + j * actualBeatDuration, j === 0, metronomeFreq);
+          for (let j = 0; j < clickCount; j++) {
+            createMetronomeClick(finalCtx, item.offset + j * clickInterval, j === 0, metronomeFreq);
           }
         }
       }
